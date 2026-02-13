@@ -24,16 +24,20 @@ def create_transaction(body: TransactionCreate, db: Session = Depends(get_db)):
 
 @router.get("")
 def list_transactions(
+    scope: str | None = None,
     type: str | None = None,
     category: str | None = None,
     entity_id: str | None = None,
     from_date: str | None = Query(None, alias="from"),
     to_date: str | None = Query(None, alias="to"),
+    sort: str = Query("date", pattern="^(date|created_at|amount)$"),
     limit: int = Query(50, le=200),
     offset: int = 0,
     db: Session = Depends(get_db),
 ):
     q = db.query(Transaction)
+    if scope:
+        q = q.filter(Transaction.scope == scope)
     if type:
         q = q.filter(Transaction.type == type)
     if category:
@@ -46,8 +50,14 @@ def list_transactions(
     if to_date:
         q = q.filter(Transaction.date <= to_date)
     total = q.count()
+
+    sort_col = {
+        "date": Transaction.date,
+        "created_at": Transaction.created_at,
+        "amount": Transaction.amount,
+    }[sort]
     txns = (
-        q.order_by(Transaction.date.desc(), Transaction.created_at.desc())
+        q.order_by(sort_col.desc())
         .offset(offset)
         .limit(limit)
         .all()

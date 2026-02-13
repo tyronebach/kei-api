@@ -1,11 +1,14 @@
+from datetime import date, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from db.connection import get_db
-from db.models import Entity
+from db.models import Entity, Transaction
 from dependencies import verify_token
-from schemas import EntityCreate, EntityOut, EntityUpdate
+from schemas import EntityCreate, EntityOut, EntitySearchOut, EntityUpdate
+from search import determine_confidence, score_record
 
 router = APIRouter(
     prefix="/api/entities",
@@ -25,6 +28,7 @@ def create_entity(body: EntityCreate, db: Session = Depends(get_db)):
 
 @router.get("")
 def list_entities(
+    scope: str | None = None,
     search: str | None = None,
     type: str | None = None,
     tag: str | None = None,
@@ -33,15 +37,10 @@ def list_entities(
     db: Session = Depends(get_db),
 ):
     q = db.query(Entity)
-    if search:
-        pattern = f"%{search}%"
-        q = q.filter(
-            or_(
-                Entity.name.ilike(pattern),
-                Entity.email.ilike(pattern),
-                Entity.phone.ilike(pattern),
-            )
-        )
+
+    # DB-level filters (exact match, fast)
+    if scope:
+        q = q.filter(Entity.scope == scope)
     if type:
         q = q.filter(Entity.type == type)
     if tag:
@@ -50,6 +49,41 @@ def list_entities(
                 "EXISTS (SELECT 1 FROM json_each(entities.tags) WHERE json_each.value = :tag)"
             ).bindparams(tag=tag)
         )
+
+    # Fuzzy search: score in Python for typo tolerance
+    if search:
+        candidates = q.all()
+        scored = []
+        for entity in candidates:
+            data = EntityOut.model_validate(entity).model_dump()
+            result = score_record(
+                query=search,
+                record_id=entity.id,
+                fields=["name", "email", "phone"],
+                data=data,
+            )
+            if result:
+                scored.append(result)
+
+        scored.sort(key=lambda r: r.score, reverse=True)
+        confident, best_match = determine_confidence(scored)
+
+        page = scored[offset : offset + limit]
+        return {
+            "data": [
+                EntitySearchOut(**r.data, score=r.score, match_type=r.match_type)
+                for r in page
+            ],
+            "meta": {
+                "count": len(page),
+                "total": len(scored),
+                "query": search,
+                "confident": confident,
+                "best_match": best_match,
+            },
+        }
+
+    # No search: standard listing
     total = q.count()
     entities = (
         q.order_by(Entity.updated_at.desc()).offset(offset).limit(limit).all()
@@ -60,12 +94,179 @@ def list_entities(
     }
 
 
+@router.get("/insights")
+def get_entity_insights(
+    scope: str | None = None,
+    inactive_days: int | None = None,
+    min_visits: int | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    sort: str = Query("last_visit", pattern="^(last_visit|total_spend|visits|name)$"),
+    limit: int = Query(20, le=200),
+    db: Session = Depends(get_db),
+):
+    # Aggregate transaction activity per entity (income only = "visits")
+    activity_q = db.query(
+        Transaction.entity_id,
+        func.count(Transaction.id).label("visit_count"),
+        func.sum(Transaction.amount).label("total_spend"),
+        func.max(Transaction.date).label("last_visit"),
+    ).filter(
+        Transaction.entity_id.isnot(None),
+        Transaction.type == "income",
+    )
+    if scope:
+        activity_q = activity_q.filter(Transaction.scope == scope)
+    activity_rows = activity_q.group_by(Transaction.entity_id).all()
+    activity = {row.entity_id: row for row in activity_rows}
+
+    # Get entities with optional creation date filters
+    q = db.query(Entity)
+    if scope:
+        q = q.filter(Entity.scope == scope)
+    if created_after:
+        epoch = int(datetime.strptime(created_after, "%Y-%m-%d").timestamp())
+        q = q.filter(Entity.created_at >= epoch)
+    if created_before:
+        epoch = int(
+            datetime.strptime(created_before, "%Y-%m-%d").timestamp() + 86400
+        )
+        q = q.filter(Entity.created_at < epoch)
+    entities = q.all()
+
+    # Enrich and filter
+    today = date.today()
+    results = []
+    for e in entities:
+        a = activity.get(e.id)
+        entry = {
+            "id": e.id,
+            "scope": e.scope,
+            "name": e.name,
+            "type": e.type,
+            "visit_count": a.visit_count if a else 0,
+            "total_spend": round(a.total_spend, 2) if a else 0,
+            "last_visit": a.last_visit if a else None,
+        }
+
+        if min_visits and entry["visit_count"] < min_visits:
+            continue
+
+        if inactive_days is not None:
+            if entry["last_visit"]:
+                last = date.fromisoformat(entry["last_visit"])
+                if (today - last).days < inactive_days:
+                    continue
+            # entities with no visits are always "inactive"
+
+        results.append(entry)
+
+    # Sort
+    sort_keys = {
+        "last_visit": lambda r: r["last_visit"] or "",
+        "total_spend": lambda r: r["total_spend"],
+        "visits": lambda r: r["visit_count"],
+        "name": lambda r: r["name"].lower(),
+    }
+    reverse = sort != "name"
+    results.sort(key=sort_keys[sort], reverse=reverse)
+
+    return {
+        "data": results[:limit],
+        "meta": {"count": len(results[:limit]), "total": len(results)},
+    }
+
+
 @router.get("/{entity_id}")
 def get_entity(entity_id: str, db: Session = Depends(get_db)):
     entity = db.get(Entity, entity_id)
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
     return {"data": EntityOut.model_validate(entity)}
+
+
+@router.get("/{entity_id}/activity")
+def get_entity_activity(entity_id: str, db: Session = Depends(get_db)):
+    entity = db.get(Entity, entity_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    # Aggregate income transactions for this entity
+    stats = (
+        db.query(
+            func.count(Transaction.id).label("visit_count"),
+            func.coalesce(func.sum(Transaction.amount), 0).label("total_spend"),
+            func.min(Transaction.date).label("first_visit"),
+            func.max(Transaction.date).label("last_visit"),
+        )
+        .filter(
+            Transaction.entity_id == entity_id,
+            Transaction.type == "income",
+        )
+        .first()
+    )
+
+    avg_spend = 0.0
+    if stats.visit_count:
+        avg_spend = round(stats.total_spend / stats.visit_count, 2)
+
+    # Category breakdown
+    categories = (
+        db.query(
+            Transaction.category,
+            func.sum(Transaction.amount).label("total"),
+            func.count().label("count"),
+        )
+        .filter(
+            Transaction.entity_id == entity_id,
+            Transaction.type == "income",
+        )
+        .group_by(Transaction.category)
+        .order_by(func.sum(Transaction.amount).desc())
+        .all()
+    )
+
+    # Recent transactions (last 5)
+    recent = (
+        db.query(Transaction)
+        .filter(Transaction.entity_id == entity_id)
+        .order_by(Transaction.date.desc(), Transaction.created_at.desc())
+        .limit(5)
+        .all()
+    )
+
+    entity_out = EntityOut.model_validate(entity)
+
+    return {
+        "data": {
+            **entity_out.model_dump(),
+            "total_spend": round(float(stats.total_spend), 2),
+            "visit_count": stats.visit_count,
+            "first_visit": stats.first_visit,
+            "last_visit": stats.last_visit,
+            "avg_spend": avg_spend,
+            "by_category": [
+                {
+                    "category": c.category,
+                    "total": round(c.total, 2),
+                    "count": c.count,
+                }
+                for c in categories
+            ],
+            "recent_transactions": [
+                {
+                    "id": t.id,
+                    "type": t.type,
+                    "amount": t.amount,
+                    "category": t.category,
+                    "description": t.description,
+                    "date": t.date,
+                    "payment_method": t.payment_method,
+                }
+                for t in recent
+            ],
+        }
+    }
 
 
 @router.put("/{entity_id}")
