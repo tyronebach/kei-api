@@ -1,0 +1,8 @@
+.venv/
+.git/
+__pycache__/
+*.py[cod]
+.env
+docs/
+data/
+.claude/
