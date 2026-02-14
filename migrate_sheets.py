@@ -260,6 +260,48 @@ def migrate_home_transactions():
     
     print(f"  Created {count} home transactions")
 
+def migrate_salon_services():
+    """Create salon services."""
+    print("\n=== Creating Salon Services ===")
+    
+    # Standard salon services with pricing
+    services = [
+        {"name": "Haircut", "category": "cuts", "price": 45.0, "duration_minutes": 45},
+        {"name": "Haircut & Style", "category": "cuts", "price": 65.0, "duration_minutes": 60},
+        {"name": "Bang Trim", "category": "cuts", "price": 15.0, "duration_minutes": 15},
+        {"name": "Roots Touch Up", "category": "color", "price": 85.0, "duration_minutes": 90},
+        {"name": "Full Color", "category": "color", "price": 120.0, "duration_minutes": 120},
+        {"name": "Highlights - Partial", "category": "color", "price": 130.0, "duration_minutes": 120},
+        {"name": "Highlights - Full", "category": "color", "price": 180.0, "duration_minutes": 150},
+        {"name": "Balayage", "category": "color", "price": 200.0, "duration_minutes": 180},
+        {"name": "Color Correction", "category": "color", "price": 250.0, "duration_minutes": 240},
+        {"name": "Gloss Treatment", "category": "treatments", "price": 45.0, "duration_minutes": 30},
+        {"name": "Deep Conditioning", "category": "treatments", "price": 35.0, "duration_minutes": 20},
+        {"name": "Keratin Treatment", "category": "treatments", "price": 300.0, "duration_minutes": 180},
+        {"name": "Blowout", "category": "styling", "price": 45.0, "duration_minutes": 45},
+        {"name": "Updo", "category": "styling", "price": 85.0, "duration_minutes": 60},
+        {"name": "Bridal Style", "category": "styling", "price": 150.0, "duration_minutes": 90},
+    ]
+    
+    count = 0
+    for svc in services:
+        service = {
+            "scope": "salon",
+            "name": svc["name"],
+            "category": svc["category"],
+            "price": svc["price"],
+            "duration_minutes": svc.get("duration_minutes"),
+        }
+        
+        try:
+            api("POST", "/api/services", service)
+            count += 1
+        except Exception as e:
+            print(f"  Failed: {svc['name']} - {e}")
+    
+    print(f"  Created {count} services")
+
+
 def main():
     print("Starting migration from Google Sheets to kei-api...")
     
@@ -272,6 +314,7 @@ def main():
         return
     
     # Migrate in order
+    migrate_salon_services()
     entity_map = migrate_salon_clients()
     migrate_salon_transactions(entity_map)
     migrate_salon_expenses()

@@ -199,3 +199,44 @@ class ItemMovementOut(BaseModel):
     created_at: int
 
     model_config = {"from_attributes": True}
+
+
+# --- Services ---
+
+
+class ServiceCreate(StrictInput):
+    scope: str
+    name: str
+    category: str | None = None
+    price: float
+    duration_minutes: int | None = None
+    notes: str | None = None
+    tags: list[str] | None = None
+    meta: dict | None = None
+
+
+class ServiceUpdate(StrictInput):
+    scope: str | None = None
+    name: str | None = None
+    category: str | None = None
+    price: float | None = None
+    duration_minutes: int | None = None
+    notes: str | None = None
+    tags: list[str] | None = None
+    meta: dict | None = None
+
+
+class ServiceOut(BaseModel):
+    id: str
+    scope: str
+    name: str
+    category: str | None = None
+    price: float
+    duration_minutes: int | None = None
+    notes: str | None = None
+    tags: list[str] | None = None
+    meta: dict | None = None
+    created_at: int
+    updated_at: int
+
+    model_config = {"from_attributes": True}

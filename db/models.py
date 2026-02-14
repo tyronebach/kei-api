@@ -103,3 +103,20 @@ class ItemMovement(Base):
     reason: Mapped[str | None] = mapped_column(String)
     transaction_id: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[int] = mapped_column(Integer, default=_now)
+
+
+class Service(Base):
+    __tablename__ = "services"
+    __table_args__ = (Index("idx_services_scope", "scope"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_generate_id)
+    scope: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    category: Mapped[str | None] = mapped_column(String)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    duration_minutes: Mapped[int | None] = mapped_column(Integer)
+    notes: Mapped[str | None] = mapped_column(Text)
+    tags: Mapped[list | None] = mapped_column(JSON)
+    meta: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[int] = mapped_column(Integer, default=_now)
+    updated_at: Mapped[int] = mapped_column(Integer, default=_now, onupdate=_now)

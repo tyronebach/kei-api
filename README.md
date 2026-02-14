@@ -334,6 +334,70 @@ DELETE /api/items/{id}
 
 ---
 
+### Services
+
+Fixed offerings like haircuts, treatments, or any service with a set price. Unlike items, services don't have quantities or stock — they're just a catalog of what you offer and what you charge.
+
+#### Create
+
+```
+POST /api/services
+```
+
+```json
+{
+  "scope": "salon",
+  "name": "Balayage",
+  "category": "color",
+  "price": 200.00,
+  "duration_minutes": 180,
+  "notes": "Includes toner and blowout",
+  "tags": ["popular"],
+  "meta": {}
+}
+```
+
+Required: `scope`, `name`, `price`. Everything else is optional.
+
+#### List
+
+```
+GET /api/services?scope=salon
+GET /api/services?category=color
+```
+
+| Param | Description |
+|-------|-------------|
+| `scope` | Filter by scope |
+| `category` | Filter by category |
+| `limit` | Max results (default 50, max 200) |
+| `offset` | Pagination offset |
+
+#### Get / Update / Delete
+
+```
+GET    /api/services/{id}
+PUT    /api/services/{id}    # partial update — only send fields to change
+DELETE /api/services/{id}
+```
+
+#### Example Queries
+
+```
+# "What services do we offer?"
+GET /api/services?scope=salon
+
+# "Change the price of roots to 100"
+# First find the service, then update it
+GET /api/services?scope=salon   # find "Roots Touch Up"
+PUT /api/services/{id}          # {"price": 100.00}
+
+# "How much do we charge for balayage?"
+GET /api/services?scope=salon   # find "Balayage", read price
+```
+
+---
+
 ### Lists
 
 Lightweight named lists — shopping lists, to-do lists, notes, reminders. The `list` field is a free-form string that acts as a category. Lists are created implicitly when the first item is added.
