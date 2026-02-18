@@ -9,3 +9,7 @@ data/
 dist/
 build/
 .ruff_cache/
+
+
+CODEX*.md
+IMP*.md
