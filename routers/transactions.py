@@ -1,21 +1,33 @@
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from db.connection import get_db
+from db.helpers import active_query, apply_scope_filter, get_scoped_or_404
 from db.models import Transaction
-from dependencies import verify_token
+from dependencies import AgentPrincipal, get_current_agent, validate_scope
 from schemas import TransactionCreate, TransactionOut, TransactionUpdate
 
 router = APIRouter(
     prefix="/api/transactions",
     tags=["transactions"],
-    dependencies=[Depends(verify_token)],
 )
 
 
 @router.post("")
-def create_transaction(body: TransactionCreate, db: Session = Depends(get_db)):
-    txn = Transaction(**body.model_dump(exclude_none=True))
+def create_transaction(
+    body: TransactionCreate,
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    if not agent.can_write():
+        raise HTTPException(status_code=403, detail="Read-only token")
+    validate_scope(body.scope)
+    if not agent.can_access_scope(body.scope):
+        raise HTTPException(status_code=403, detail=f"No write access to scope '{body.scope}'")
+
+    txn = Transaction(**body.model_dump(exclude_none=True), created_by=agent.agent_id)
     db.add(txn)
     db.commit()
     db.refresh(txn)
@@ -33,11 +45,10 @@ def list_transactions(
     sort: str = Query("date", pattern="^(date|created_at|amount)$"),
     limit: int = Query(50, le=200),
     offset: int = 0,
+    agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Transaction)
-    if scope:
-        q = q.filter(Transaction.scope == scope)
+    q = apply_scope_filter(active_query(db, Transaction), Transaction, scope, agent)
     if type:
         q = q.filter(Transaction.type == type)
     if category:
@@ -45,9 +56,9 @@ def list_transactions(
         q = q.filter(Transaction.category.in_(categories))
     if entity_id:
         q = q.filter(Transaction.entity_id == entity_id)
-    if from_date:
+    if from_date is not None:
         q = q.filter(Transaction.date >= from_date)
-    if to_date:
+    if to_date is not None:
         q = q.filter(Transaction.date <= to_date)
     total = q.count()
 
@@ -69,32 +80,53 @@ def list_transactions(
 
 
 @router.get("/{transaction_id}")
-def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
-    txn = db.get(Transaction, transaction_id)
-    if not txn:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+def get_transaction(
+    transaction_id: str,
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    txn = get_scoped_or_404(db, Transaction, transaction_id, agent)
     return {"data": TransactionOut.model_validate(txn)}
 
 
 @router.put("/{transaction_id}")
 def update_transaction(
-    transaction_id: str, body: TransactionUpdate, db: Session = Depends(get_db)
+    transaction_id: str,
+    body: TransactionUpdate,
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
 ):
-    txn = db.get(Transaction, transaction_id)
-    if not txn:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+    if not agent.can_write():
+        raise HTTPException(status_code=403, detail="Read-only token")
+
+    txn = get_scoped_or_404(db, Transaction, transaction_id, agent)
+    if body.scope is not None:
+        validate_scope(body.scope)
+        if not agent.can_access_scope(body.scope):
+            raise HTTPException(
+                status_code=403,
+                detail=f"No write access to scope '{body.scope}'",
+            )
+
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(txn, key, value)
+    txn.updated_by = agent.agent_id
     db.commit()
     db.refresh(txn)
     return {"data": TransactionOut.model_validate(txn)}
 
 
 @router.delete("/{transaction_id}")
-def delete_transaction(transaction_id: str, db: Session = Depends(get_db)):
-    txn = db.get(Transaction, transaction_id)
-    if not txn:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    db.delete(txn)
+def delete_transaction(
+    transaction_id: str,
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    if not agent.can_write():
+        raise HTTPException(status_code=403, detail="Read-only token")
+
+    txn = get_scoped_or_404(db, Transaction, transaction_id, agent)
+    txn.deleted_at = int(time.time())
+    txn.updated_by = agent.agent_id
     db.commit()
     return {"data": {"id": transaction_id, "deleted": True}}

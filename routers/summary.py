@@ -1,17 +1,18 @@
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import distinct, func, literal_column, text
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import distinct, func, literal_column
 from sqlalchemy.orm import Session
 
 from db.connection import get_db
+from db.helpers import apply_scope_filter
 from db.models import Entity, Item, Transaction
-from dependencies import verify_token
+from dependencies import AgentPrincipal, get_current_agent
+from utils import parse_date
 
 router = APIRouter(
     prefix="/api/summary",
     tags=["summary"],
-    dependencies=[Depends(verify_token)],
 )
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -30,8 +31,20 @@ def _resolve_period(
         return f"{today.year}-{today.month:02d}-01", str(today)
     elif period == "year":
         return f"{today.year}-01-01", str(today)
-    elif period == "custom" and from_date and to_date:
-        return from_date, to_date
+    elif period == "custom":
+        if not from_date or not to_date:
+            raise HTTPException(
+                status_code=422,
+                detail="Custom period requires both 'from' and 'to' dates.",
+            )
+        start = parse_date(from_date, "from")
+        end = parse_date(to_date, "to")
+        if start > end:
+            raise HTTPException(
+                status_code=422,
+                detail="'from' date must be less than or equal to 'to' date.",
+            )
+        return start.isoformat(), end.isoformat()
     return f"{today.year}-{today.month:02d}-01", str(today)
 
 
@@ -46,16 +59,23 @@ def _previous_period(start: str, end: str) -> tuple[str, str]:
 
 
 def _period_totals(
-    db: Session, start: str, end: str, scope: str | None = None
+    db: Session,
+    start: str,
+    end: str,
+    agent: AgentPrincipal,
+    scope: str | None = None,
 ) -> dict:
     """Compute income/expense totals for a date range."""
     q = db.query(
         Transaction.type,
         func.sum(Transaction.amount).label("total"),
         func.count().label("count"),
-    ).filter(Transaction.date >= start, Transaction.date <= end)
-    if scope:
-        q = q.filter(Transaction.scope == scope)
+    ).filter(
+        Transaction.date >= start,
+        Transaction.date <= end,
+        Transaction.deleted_at.is_(None),
+    )
+    q = apply_scope_filter(q, Transaction, scope, agent)
     rows = q.group_by(Transaction.type).all()
     income = {"total": 0.0, "count": 0}
     expenses = {"total": 0.0, "count": 0}
@@ -74,10 +94,11 @@ def get_summary(
     period: str = Query("month"),
     from_date: str | None = Query(None, alias="from"),
     to_date: str | None = Query(None, alias="to"),
+    agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
     start, end = _resolve_period(period, from_date, to_date)
-    totals = _period_totals(db, start, end, scope)
+    totals = _period_totals(db, start, end, agent, scope)
     income = totals["income"]
     expenses = totals["expenses"]
 
@@ -90,9 +111,9 @@ def get_summary(
         Transaction.date >= start,
         Transaction.date <= end,
         Transaction.type == "income",
+        Transaction.deleted_at.is_(None),
     )
-    if scope:
-        top_income_q = top_income_q.filter(Transaction.scope == scope)
+    top_income_q = apply_scope_filter(top_income_q, Transaction, scope, agent)
     top_income = (
         top_income_q.group_by(Transaction.category)
         .order_by(func.sum(Transaction.amount).desc())
@@ -109,9 +130,9 @@ def get_summary(
         Transaction.date >= start,
         Transaction.date <= end,
         Transaction.type == "expense",
+        Transaction.deleted_at.is_(None),
     )
-    if scope:
-        top_expense_q = top_expense_q.filter(Transaction.scope == scope)
+    top_expense_q = apply_scope_filter(top_expense_q, Transaction, scope, agent)
     top_expense = (
         top_expense_q.group_by(Transaction.category)
         .order_by(func.sum(Transaction.amount).desc())
@@ -125,9 +146,9 @@ def get_summary(
         Transaction.date <= end,
         Transaction.type == "income",
         Transaction.entity_id.isnot(None),
+        Transaction.deleted_at.is_(None),
     )
-    if scope:
-        active_q = active_q.filter(Transaction.scope == scope)
+    active_q = apply_scope_filter(active_q, Transaction, scope, agent)
     active_ids = active_q.all()
     active_count = len(active_ids)
 
@@ -136,19 +157,20 @@ def get_summary(
         (date.fromisoformat(end) + timedelta(days=1)).strftime("%s")
     )
     new_q = db.query(func.count(Entity.id)).filter(
-        Entity.created_at >= start_epoch, Entity.created_at < end_epoch
+        Entity.created_at >= start_epoch,
+        Entity.created_at < end_epoch,
+        Entity.deleted_at.is_(None),
     )
-    if scope:
-        new_q = new_q.filter(Entity.scope == scope)
+    new_q = apply_scope_filter(new_q, Entity, scope, agent)
     new_count = new_q.scalar()
 
     # Inventory alerts
     low_stock_q = db.query(func.count(Item.id)).filter(
         Item.reorder_threshold.isnot(None),
         Item.quantity <= Item.reorder_threshold,
+        Item.deleted_at.is_(None),
     )
-    if scope:
-        low_stock_q = low_stock_q.filter(Item.scope == scope)
+    low_stock_q = apply_scope_filter(low_stock_q, Item, scope, agent)
     low_stock_count = low_stock_q.scalar()
 
     def _fmt_cats(rows):
@@ -181,13 +203,14 @@ def get_trends(
     period: str = Query("month"),
     from_date: str | None = Query(None, alias="from"),
     to_date: str | None = Query(None, alias="to"),
+    agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
     start, end = _resolve_period(period, from_date, to_date)
     prev_start, prev_end = _previous_period(start, end)
 
-    current = _period_totals(db, start, end, scope)
-    previous = _period_totals(db, prev_start, prev_end, scope)
+    current = _period_totals(db, start, end, agent, scope)
+    previous = _period_totals(db, prev_start, prev_end, agent, scope)
 
     cur_profit = current["income"]["total"] - current["expenses"]["total"]
     prev_profit = previous["income"]["total"] - previous["expenses"]["total"]
@@ -235,12 +258,64 @@ def get_trends(
     }
 
 
+@router.get("/by-scope")
+def get_summary_by_scope(
+    scope: str | None = None,
+    period: str = Query("month"),
+    from_date: str | None = Query(None, alias="from"),
+    to_date: str | None = Query(None, alias="to"),
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    start, end = _resolve_period(period, from_date, to_date)
+
+    q = db.query(
+        Transaction.scope,
+        Transaction.type,
+        func.sum(Transaction.amount).label("total"),
+        func.count().label("count"),
+    ).filter(
+        Transaction.date >= start,
+        Transaction.date <= end,
+        Transaction.deleted_at.is_(None),
+    )
+    q = apply_scope_filter(q, Transaction, scope, agent)
+    rows = q.group_by(Transaction.scope, Transaction.type).all()
+
+    per_scope: dict[str, dict] = {}
+    for row in rows:
+        if row.scope not in per_scope:
+            per_scope[row.scope] = {
+                "scope": row.scope,
+                "income": {"total": 0.0, "count": 0},
+                "expenses": {"total": 0.0, "count": 0},
+            }
+        bucket = {"total": round(row.total, 2), "count": row.count}
+        if row.type == "income":
+            per_scope[row.scope]["income"] = bucket
+        elif row.type == "expense":
+            per_scope[row.scope]["expenses"] = bucket
+
+    scopes = sorted(per_scope.values(), key=lambda row: row["scope"])
+    for row in scopes:
+        row["profit"] = round(row["income"]["total"] - row["expenses"]["total"], 2)
+
+    return {
+        "data": {
+            "period": {"from": start, "to": end},
+            "scopes": scopes,
+        },
+        "meta": {"count": len(scopes)},
+    }
+
+
 @router.get("/by-day")
 def get_by_day(
     scope: str | None = None,
     period: str = Query("month"),
     from_date: str | None = Query(None, alias="from"),
     to_date: str | None = Query(None, alias="to"),
+    agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
     start, end = _resolve_period(period, from_date, to_date)
@@ -256,9 +331,9 @@ def get_by_day(
         Transaction.date >= start,
         Transaction.date <= end,
         Transaction.type == "income",
+        Transaction.deleted_at.is_(None),
     )
-    if scope:
-        q = q.filter(Transaction.scope == scope)
+    q = apply_scope_filter(q, Transaction, scope, agent)
     rows = q.group_by(literal_column("1")).all()
 
     # Build full week (all 7 days), SQLite dow: 0=Sun,1=Mon..6=Sat

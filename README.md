@@ -11,6 +11,7 @@ Domain-agnostic — works for salon management, household tracking, small busine
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env  # edit KEI_API_TOKEN
+.venv/bin/alembic upgrade head
 .venv/bin/uvicorn main:app --port 8081 --reload
 
 # Docker
@@ -18,31 +19,42 @@ docker build -t kei-api .
 docker run -p 8081:8081 -e KEI_API_TOKEN=your-secret -v kei-data:/app/data kei-api
 ```
 
+Deployment and operations runbook: `DEPLOY.md`.
+
 ## Auth
 
-All `/api/*` endpoints require a bearer token:
+All `/api/*` endpoints require a bearer token.
 
 ```
-Authorization: Bearer <KEI_API_TOKEN>
+Authorization: Bearer <token>
 ```
 
+Auth resolution order:
+1. `agent_tokens.token_hash` match (SHA-256 of bearer token) -> scoped principal
+2. Fallback to legacy `KEI_API_TOKEN` -> admin principal (`allowed_scopes=["*"]`)
+
+Write endpoints require `write` permission. Read endpoints always enforce scope access.
 The `/health` endpoint is public.
 
 ## Environment
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KEI_API_TOKEN` | `changeme` | Bearer token for API auth |
+| `KEI_API_TOKEN` | `changeme` | Legacy admin fallback token |
 | `KEI_DATABASE_URL` | `sqlite:///./data/kei.db` | SQLite database path |
+| `KEI_VALID_SCOPES` | `["salon","home"]` | Allowed scopes (JSON list) |
 
 ## Scope
 
-Every record has a `scope` field — a simple string that namespaces data. Required when creating records, optional when querying.
+Every record has a `scope` field. Scope is required on creates and validated against `KEI_VALID_SCOPES`.
+For list endpoints, scope behavior depends on the caller's token:
+- wildcard agents (`allowed_scopes=["*"]`) can omit `scope` to query across all scopes
+- scoped agents only see their own allowed scopes when `scope` is omitted
 
 ```
 POST /api/transactions  {"scope": "salon", ...}   # required on create
-GET  /api/transactions?scope=salon                 # optional filter — omit to see all
-GET  /api/transactions                             # returns salon + home + everything
+GET  /api/transactions?scope=salon                 # explicit scope filter
+GET  /api/transactions                             # all scopes only for wildcard agents
 ```
 
 The agent decides the scope by reasoning about context. Emily says "I spent $87 on date night" — Rem knows that's `scope: "home"`. Emily says "Kevin paid for a haircut" — that's `scope: "salon"`.
@@ -56,6 +68,18 @@ Base URL: `http://localhost:8081`
 All responses follow `{"data": ...}` or `{"data": [...], "meta": {"count": N, "total": N}}`.
 
 All input bodies reject unknown fields (HTTP 422) so agents get a clear error instead of silently losing data.
+Delete operations are soft deletes: records are marked with `deleted_at` and excluded from all standard list/get/summary queries.
+
+HTTP error responses are normalized:
+
+```json
+{
+  "error": true,
+  "status": 422,
+  "message": "Validation error",
+  "details": [...]
+}
+```
 
 ---
 
@@ -64,6 +88,8 @@ All input bodies reject unknown fields (HTTP 422) so agents get a clear error in
 ```
 GET /health → {"status": "ok"}
 ```
+
+Returns `503 {"status":"unhealthy"}` if DB connectivity check fails.
 
 ---
 
@@ -311,7 +337,7 @@ POST /api/items/{id}/adjust
 ```
 
 - `in` adds to current quantity
-- `out` subtracts (returns 400 if insufficient stock)
+- `out` subtracts (returns 409 if insufficient stock)
 - `adjustment` sets quantity to the given value
 
 Every adjustment creates an audit trail entry in `item_movements`.
@@ -364,12 +390,14 @@ Required: `scope`, `name`, `price`. Everything else is optional.
 ```
 GET /api/services?scope=salon
 GET /api/services?category=color
+GET /api/services?tag=popular
 ```
 
 | Param | Description |
 |-------|-------------|
 | `scope` | Filter by scope |
 | `category` | Filter by category |
+| `tag` | Filter by tag value in `tags` JSON array |
 | `limit` | Max results (default 50, max 200) |
 | `offset` | Pagination offset |
 
@@ -571,6 +599,15 @@ Income breakdown by day of week:
 }
 ```
 
+#### By Scope
+
+```
+GET /api/summary/by-scope?period=month
+GET /api/summary/by-scope?scope=salon&period=custom&from=2026-02-01&to=2026-02-29
+```
+
+Returns income/expense/profit grouped by scope for the selected period.
+
 ---
 
 ## Design Principles
@@ -585,7 +622,7 @@ Search tolerates typos ("keven" → "Kevin"), partial names, and phonetic matche
 All input schemas reject unknown fields (`extra: "forbid"`). If an agent sends `{"name": "Kevin", "phon": "555-1234"}`, it gets a 422 error pointing to the bad field — not a silent success that drops the phone number.
 
 ### Scope-based namespacing
-One API instance serves multiple contexts. A salon owner who also tracks home expenses uses `scope: "salon"` and `scope: "home"`. Scoped indexes keep queries fast. Omit scope to query across everything.
+One API instance serves multiple contexts. A salon owner who also tracks home expenses uses `scope: "salon"` and `scope: "home"`. Scoped indexes keep queries fast. Cross-scope reads are controlled by token scope permissions.
 
 ---
 

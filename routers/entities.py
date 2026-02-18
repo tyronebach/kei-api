@@ -1,25 +1,37 @@
-from datetime import date, datetime
+import time
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from db.connection import get_db
+from db.helpers import active_query, apply_scope_filter, get_scoped_or_404
 from db.models import Entity, Transaction
-from dependencies import verify_token
+from dependencies import AgentPrincipal, get_current_agent, validate_scope
 from schemas import EntityCreate, EntityOut, EntitySearchOut, EntityUpdate
 from search import determine_confidence, score_record
+from utils import parse_date
 
 router = APIRouter(
     prefix="/api/entities",
     tags=["entities"],
-    dependencies=[Depends(verify_token)],
 )
 
 
 @router.post("")
-def create_entity(body: EntityCreate, db: Session = Depends(get_db)):
-    entity = Entity(**body.model_dump(exclude_none=True))
+def create_entity(
+    body: EntityCreate,
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    if not agent.can_write():
+        raise HTTPException(status_code=403, detail="Read-only token")
+    validate_scope(body.scope)
+    if not agent.can_access_scope(body.scope):
+        raise HTTPException(status_code=403, detail=f"No write access to scope '{body.scope}'")
+
+    entity = Entity(**body.model_dump(exclude_none=True), created_by=agent.agent_id)
     db.add(entity)
     db.commit()
     db.refresh(entity)
@@ -34,13 +46,11 @@ def list_entities(
     tag: str | None = None,
     limit: int = Query(50, le=200),
     offset: int = 0,
+    agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Entity)
+    q = apply_scope_filter(active_query(db, Entity), Entity, scope, agent)
 
-    # DB-level filters (exact match, fast)
-    if scope:
-        q = q.filter(Entity.scope == scope)
     if type:
         q = q.filter(Entity.type == type)
     if tag:
@@ -103,6 +113,7 @@ def get_entity_insights(
     created_before: str | None = None,
     sort: str = Query("last_visit", pattern="^(last_visit|total_spend|visits|name)$"),
     limit: int = Query(20, le=200),
+    agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
     # Aggregate transaction activity per entity (income only = "visits")
@@ -114,23 +125,22 @@ def get_entity_insights(
     ).filter(
         Transaction.entity_id.isnot(None),
         Transaction.type == "income",
+        Transaction.deleted_at.is_(None),
     )
-    if scope:
-        activity_q = activity_q.filter(Transaction.scope == scope)
+    activity_q = apply_scope_filter(activity_q, Transaction, scope, agent)
     activity_rows = activity_q.group_by(Transaction.entity_id).all()
     activity = {row.entity_id: row for row in activity_rows}
 
     # Get entities with optional creation date filters
-    q = db.query(Entity)
-    if scope:
-        q = q.filter(Entity.scope == scope)
+    q = apply_scope_filter(active_query(db, Entity), Entity, scope, agent)
     if created_after:
-        epoch = int(datetime.strptime(created_after, "%Y-%m-%d").timestamp())
+        created_after_date = parse_date(created_after, "created_after")
+        epoch = int(datetime.combine(created_after_date, datetime.min.time()).timestamp())
         q = q.filter(Entity.created_at >= epoch)
     if created_before:
-        epoch = int(
-            datetime.strptime(created_before, "%Y-%m-%d").timestamp() + 86400
-        )
+        created_before_date = parse_date(created_before, "created_before")
+        day_after = created_before_date + timedelta(days=1)
+        epoch = int(datetime.combine(day_after, datetime.min.time()).timestamp())
         q = q.filter(Entity.created_at < epoch)
     entities = q.all()
 
@@ -178,18 +188,22 @@ def get_entity_insights(
 
 
 @router.get("/{entity_id}")
-def get_entity(entity_id: str, db: Session = Depends(get_db)):
-    entity = db.get(Entity, entity_id)
-    if not entity:
-        raise HTTPException(status_code=404, detail="Entity not found")
+def get_entity(
+    entity_id: str,
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    entity = get_scoped_or_404(db, Entity, entity_id, agent)
     return {"data": EntityOut.model_validate(entity)}
 
 
 @router.get("/{entity_id}/activity")
-def get_entity_activity(entity_id: str, db: Session = Depends(get_db)):
-    entity = db.get(Entity, entity_id)
-    if not entity:
-        raise HTTPException(status_code=404, detail="Entity not found")
+def get_entity_activity(
+    entity_id: str,
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    entity = get_scoped_or_404(db, Entity, entity_id, agent)
 
     # Aggregate income transactions for this entity
     stats = (
@@ -202,6 +216,7 @@ def get_entity_activity(entity_id: str, db: Session = Depends(get_db)):
         .filter(
             Transaction.entity_id == entity_id,
             Transaction.type == "income",
+            Transaction.deleted_at.is_(None),
         )
         .first()
     )
@@ -220,6 +235,7 @@ def get_entity_activity(entity_id: str, db: Session = Depends(get_db)):
         .filter(
             Transaction.entity_id == entity_id,
             Transaction.type == "income",
+            Transaction.deleted_at.is_(None),
         )
         .group_by(Transaction.category)
         .order_by(func.sum(Transaction.amount).desc())
@@ -229,7 +245,10 @@ def get_entity_activity(entity_id: str, db: Session = Depends(get_db)):
     # Recent transactions (last 5)
     recent = (
         db.query(Transaction)
-        .filter(Transaction.entity_id == entity_id)
+        .filter(
+            Transaction.entity_id == entity_id,
+            Transaction.deleted_at.is_(None),
+        )
         .order_by(Transaction.date.desc(), Transaction.created_at.desc())
         .limit(5)
         .all()
@@ -271,23 +290,42 @@ def get_entity_activity(entity_id: str, db: Session = Depends(get_db)):
 
 @router.put("/{entity_id}")
 def update_entity(
-    entity_id: str, body: EntityUpdate, db: Session = Depends(get_db)
+    entity_id: str,
+    body: EntityUpdate,
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
 ):
-    entity = db.get(Entity, entity_id)
-    if not entity:
-        raise HTTPException(status_code=404, detail="Entity not found")
+    if not agent.can_write():
+        raise HTTPException(status_code=403, detail="Read-only token")
+
+    entity = get_scoped_or_404(db, Entity, entity_id, agent)
+    if body.scope is not None:
+        validate_scope(body.scope)
+        if not agent.can_access_scope(body.scope):
+            raise HTTPException(
+                status_code=403,
+                detail=f"No write access to scope '{body.scope}'",
+            )
+
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(entity, key, value)
+    entity.updated_by = agent.agent_id
     db.commit()
     db.refresh(entity)
     return {"data": EntityOut.model_validate(entity)}
 
 
 @router.delete("/{entity_id}")
-def delete_entity(entity_id: str, db: Session = Depends(get_db)):
-    entity = db.get(Entity, entity_id)
-    if not entity:
-        raise HTTPException(status_code=404, detail="Entity not found")
-    db.delete(entity)
+def delete_entity(
+    entity_id: str,
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    if not agent.can_write():
+        raise HTTPException(status_code=403, detail="Read-only token")
+
+    entity = get_scoped_or_404(db, Entity, entity_id, agent)
+    entity.deleted_at = int(time.time())
+    entity.updated_by = agent.agent_id
     db.commit()
     return {"data": {"id": entity_id, "deleted": True}}

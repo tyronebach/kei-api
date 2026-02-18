@@ -1,7 +1,7 @@
 import time
 import uuid
 
-from sqlalchemy import Float, Index, Integer, String, Text
+from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +29,9 @@ class Entity(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     tags: Mapped[list | None] = mapped_column(JSON)
     meta: Mapped[dict | None] = mapped_column(JSON)
+    created_by: Mapped[str | None] = mapped_column(String)
+    updated_by: Mapped[str | None] = mapped_column(String)
+    deleted_at: Mapped[int | None] = mapped_column(Integer, index=True)
     created_at: Mapped[int] = mapped_column(Integer, default=_now)
     updated_at: Mapped[int] = mapped_column(Integer, default=_now, onupdate=_now)
 
@@ -49,10 +52,16 @@ class Transaction(Base):
     category: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     date: Mapped[str] = mapped_column(String, nullable=False)
-    entity_id: Mapped[str | None] = mapped_column(String)
+    entity_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("entities.id", ondelete="SET NULL"),
+    )
     tags: Mapped[list | None] = mapped_column(JSON)
     payment_method: Mapped[str | None] = mapped_column(String)
     meta: Mapped[dict | None] = mapped_column(JSON)
+    created_by: Mapped[str | None] = mapped_column(String)
+    updated_by: Mapped[str | None] = mapped_column(String)
+    deleted_at: Mapped[int | None] = mapped_column(Integer, index=True)
     created_at: Mapped[int] = mapped_column(Integer, default=_now)
     updated_at: Mapped[int] = mapped_column(Integer, default=_now, onupdate=_now)
 
@@ -71,6 +80,9 @@ class Item(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     tags: Mapped[list | None] = mapped_column(JSON)
     meta: Mapped[dict | None] = mapped_column(JSON)
+    created_by: Mapped[str | None] = mapped_column(String)
+    updated_by: Mapped[str | None] = mapped_column(String)
+    deleted_at: Mapped[int | None] = mapped_column(Integer, index=True)
     created_at: Mapped[int] = mapped_column(Integer, default=_now)
     updated_at: Mapped[int] = mapped_column(Integer, default=_now, onupdate=_now)
 
@@ -89,6 +101,9 @@ class ListItem(Base):
     content: Mapped[str] = mapped_column(String, nullable=False)
     checked: Mapped[bool] = mapped_column(Integer, default=False)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str | None] = mapped_column(String)
+    updated_by: Mapped[str | None] = mapped_column(String)
+    deleted_at: Mapped[int | None] = mapped_column(Integer, index=True)
     created_at: Mapped[int] = mapped_column(Integer, default=_now)
     updated_at: Mapped[int] = mapped_column(Integer, default=_now, onupdate=_now)
 
@@ -97,11 +112,18 @@ class ItemMovement(Base):
     __tablename__ = "item_movements"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_generate_id)
-    item_id: Mapped[str] = mapped_column(String, nullable=False)
+    item_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     type: Mapped[str] = mapped_column(String, nullable=False)  # in, out, adjustment
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
     reason: Mapped[str | None] = mapped_column(String)
-    transaction_id: Mapped[str | None] = mapped_column(String)
+    transaction_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("transactions.id", ondelete="SET NULL"),
+    )
     created_at: Mapped[int] = mapped_column(Integer, default=_now)
 
 
@@ -118,5 +140,23 @@ class Service(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     tags: Mapped[list | None] = mapped_column(JSON)
     meta: Mapped[dict | None] = mapped_column(JSON)
+    created_by: Mapped[str | None] = mapped_column(String)
+    updated_by: Mapped[str | None] = mapped_column(String)
+    deleted_at: Mapped[int | None] = mapped_column(Integer, index=True)
     created_at: Mapped[int] = mapped_column(Integer, default=_now)
     updated_at: Mapped[int] = mapped_column(Integer, default=_now, onupdate=_now)
+
+
+class AgentToken(Base):
+    __tablename__ = "agent_tokens"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_generate_id)
+    agent_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    token_hash: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    allowed_scopes: Mapped[list] = mapped_column(JSON, nullable=False)
+    permissions: Mapped[list] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: ["read", "write"],
+    )
+    created_at: Mapped[int] = mapped_column(Integer, default=_now)

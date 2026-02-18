@@ -1,6 +1,15 @@
+from datetime import date as date_type
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def _validate_date_str(value: str) -> str:
+    try:
+        date_type.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid date format: '{value}'. Expected YYYY-MM-DD.") from exc
+    return value
 
 
 class StrictInput(BaseModel):
@@ -9,13 +18,36 @@ class StrictInput(BaseModel):
 
     model_config = {"extra": "forbid"}
 
+    @field_validator("*", mode="before")
+    @classmethod
+    def strip_strings(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def normalize_string_lists(cls, value):
+        if isinstance(value, list) and all(isinstance(item, str) for item in value):
+            cleaned: list[str] = []
+            seen: set[str] = set()
+            for item in value:
+                normalized = item.strip()
+                if not normalized:
+                    raise ValueError("List values cannot be empty strings.")
+                if normalized not in seen:
+                    cleaned.append(normalized)
+                    seen.add(normalized)
+            return cleaned
+        return value
+
 
 # --- Entities ---
 
 
 class EntityCreate(StrictInput):
     scope: str
-    name: str
+    name: str = Field(min_length=1)
     type: str | None = None
     phone: str | None = None
     email: str | None = None
@@ -26,7 +58,7 @@ class EntityCreate(StrictInput):
 
 class EntityUpdate(StrictInput):
     scope: str | None = None
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1)
     type: str | None = None
     phone: str | None = None
     email: str | None = None
@@ -45,6 +77,8 @@ class EntityOut(BaseModel):
     notes: str | None = None
     tags: list[str] | None = None
     meta: dict | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
     created_at: int
     updated_at: int
 
@@ -62,7 +96,7 @@ class EntitySearchOut(EntityOut):
 class TransactionCreate(StrictInput):
     scope: str
     type: Literal["income", "expense"]
-    amount: float
+    amount: float = Field(gt=0)
     category: str
     description: str | None = None
     date: str
@@ -71,11 +105,16 @@ class TransactionCreate(StrictInput):
     payment_method: str | None = None
     meta: dict | None = None
 
+    @field_validator("date")
+    @classmethod
+    def validate_date(cls, value: str) -> str:
+        return _validate_date_str(value)
+
 
 class TransactionUpdate(StrictInput):
     scope: str | None = None
     type: Literal["income", "expense"] | None = None
-    amount: float | None = None
+    amount: float | None = Field(default=None, gt=0)
     category: str | None = None
     description: str | None = None
     date: str | None = None
@@ -83,6 +122,13 @@ class TransactionUpdate(StrictInput):
     tags: list[str] | None = None
     payment_method: str | None = None
     meta: dict | None = None
+
+    @field_validator("date")
+    @classmethod
+    def validate_date(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return _validate_date_str(value)
 
 
 class TransactionOut(BaseModel):
@@ -97,6 +143,8 @@ class TransactionOut(BaseModel):
     tags: list[str] | None = None
     payment_method: str | None = None
     meta: dict | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
     created_at: int
     updated_at: int
 
@@ -108,9 +156,9 @@ class TransactionOut(BaseModel):
 
 class ItemCreate(StrictInput):
     scope: str
-    name: str
+    name: str = Field(min_length=1)
     category: str | None = None
-    quantity: float = 0
+    quantity: float = Field(default=0, ge=0)
     unit: str = "unit"
     reorder_threshold: float | None = None
     notes: str | None = None
@@ -120,9 +168,9 @@ class ItemCreate(StrictInput):
 
 class ItemUpdate(StrictInput):
     scope: str | None = None
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1)
     category: str | None = None
-    quantity: float | None = None
+    quantity: float | None = Field(default=None, ge=0)
     unit: str | None = None
     reorder_threshold: float | None = None
     notes: str | None = None
@@ -141,6 +189,8 @@ class ItemOut(BaseModel):
     notes: str | None = None
     tags: list[str] | None = None
     meta: dict | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
     created_at: int
     updated_at: int
 
@@ -158,12 +208,12 @@ class ItemSearchOut(ItemOut):
 class ListItemCreate(StrictInput):
     scope: str
     list: str
-    content: str
+    content: str = Field(min_length=1)
     position: int | None = None
 
 
 class ListItemUpdate(StrictInput):
-    content: str | None = None
+    content: str | None = Field(default=None, min_length=1)
     checked: bool | None = None
     position: int | None = None
     list: str | None = None
@@ -176,6 +226,8 @@ class ListItemOut(BaseModel):
     content: str
     checked: bool
     position: int
+    created_by: str | None = None
+    updated_by: str | None = None
     created_at: int
     updated_at: int
 
@@ -184,9 +236,17 @@ class ListItemOut(BaseModel):
 
 class ItemAdjust(StrictInput):
     type: Literal["in", "out", "adjustment"]
-    quantity: float
+    quantity: float = Field(ge=0)
     reason: str | None = None
     transaction_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_quantity_by_type(self):
+        if self.type in {"in", "out"} and self.quantity <= 0:
+            raise ValueError("Quantity must be greater than 0 for 'in' and 'out'.")
+        if self.type == "adjustment" and self.quantity < 0:
+            raise ValueError("Quantity cannot be negative for 'adjustment'.")
+        return self
 
 
 class ItemMovementOut(BaseModel):
@@ -206,9 +266,9 @@ class ItemMovementOut(BaseModel):
 
 class ServiceCreate(StrictInput):
     scope: str
-    name: str
+    name: str = Field(min_length=1)
     category: str | None = None
-    price: float
+    price: float = Field(gt=0)
     duration_minutes: int | None = None
     notes: str | None = None
     tags: list[str] | None = None
@@ -217,9 +277,9 @@ class ServiceCreate(StrictInput):
 
 class ServiceUpdate(StrictInput):
     scope: str | None = None
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1)
     category: str | None = None
-    price: float | None = None
+    price: float | None = Field(default=None, gt=0)
     duration_minutes: int | None = None
     notes: str | None = None
     tags: list[str] | None = None
@@ -236,6 +296,8 @@ class ServiceOut(BaseModel):
     notes: str | None = None
     tags: list[str] | None = None
     meta: dict | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
     created_at: int
     updated_at: int
 
