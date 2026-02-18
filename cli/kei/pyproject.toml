@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kei"
+version = "0.1.0"
+description = "Kei CLI - Agent-first data management for LLM assistants"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "typer[all]>=0.9.0",
+    "httpx>=0.27.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+kei = "kei.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kei"]

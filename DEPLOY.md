@@ -84,24 +84,57 @@ Rollback one revision:
 
 ## Agent Token Provisioning
 
-Auth lookup:
-1. SHA-256 hash match against `agent_tokens.token_hash`
-2. fallback to raw `KEI_API_TOKEN` admin token
+### How auth works
 
-Use this snippet to create/update an agent token:
+1. Request `Authorization: Bearer <token>` → SHA-256 hash → lookup in `agent_tokens.token_hash`
+2. If matched: `created_by`/`updated_by` set to that agent's `agent_id`
+3. If no match: fallback to legacy `KEI_API_TOKEN` env var → attributed as `admin`
+
+### Token schema (`agent_tokens` table)
+
+| Column | Purpose |
+|--------|---------|
+| `agent_id` | Unique agent name (e.g., `rem`, `satella`) |
+| `token_hash` | SHA-256 of the raw token |
+| `allowed_scopes` | JSON list of scopes the agent can access (e.g., `["salon","home"]`) |
+| `permissions` | JSON list: `["read"]` or `["read","write"]` |
+
+### Token file convention
+
+Raw tokens are stored on disk (not in agent configs or SKILL.md files):
+
+```
+~/.config/kei/tokens/<agent_id>    # mode 0600
+```
+
+Agents read their token at runtime:
+```bash
+export KEI_API_TOKEN=$(cat ~/.config/kei/tokens/rem)
+```
+
+### Current tokens
+
+| Agent | Scopes | Permissions |
+|-------|--------|-------------|
+| rem | salon, home | read, write |
+| satella | salon, home | read |
+| beatrice | salon, home | read, write |
+
+### Provisioning a new token
 
 ```bash
 .venv/bin/python - <<'PY'
-import hashlib, time
+import hashlib, secrets, time, os
 from sqlalchemy import create_engine, text
 from config import settings
 
-agent_id = "rem"
-raw_token = "replace-with-secret-token"
+agent_id = "new-agent"
 allowed_scopes_json = '["salon","home"]'
 permissions_json = '["read","write"]'
 
+raw_token = secrets.token_urlsafe(32)
 token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+
 engine = create_engine(settings.database_url)
 with engine.begin() as conn:
     conn.execute(text("""
@@ -117,7 +150,16 @@ with engine.begin() as conn:
         "permissions": permissions_json,
         "created_at": int(time.time()),
     })
-print("token stored for", agent_id)
+
+# Save raw token to disk
+token_dir = os.path.expanduser("~/.config/kei/tokens")
+os.makedirs(token_dir, mode=0o700, exist_ok=True)
+token_file = os.path.join(token_dir, agent_id)
+with open(token_file, "w") as f:
+    f.write(raw_token)
+os.chmod(token_file, 0o600)
+
+print(f"Provisioned {agent_id} → {token_file}")
 PY
 ```
 

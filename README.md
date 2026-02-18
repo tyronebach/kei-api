@@ -21,6 +21,31 @@ docker run -p 8081:8081 -e KEI_API_TOKEN=your-secret -v kei-data:/app/data kei-a
 
 Deployment and operations runbook: `DEPLOY.md`.
 
+## Integrated CLI
+
+This repo includes the Kei CLI at `cli/kei` for agent-facing commands.
+
+```bash
+cd cli/kei
+python3 -m venv .venv
+.venv/bin/pip install -e .
+
+# point CLI at local API
+export KEI_API_BASE=http://127.0.0.1:8081
+export KEI_API_TOKEN=test-token
+
+# quick checks
+.venv/bin/python -m kei.cli health
+.venv/bin/python -m kei.cli -s salon summary
+```
+
+CLI integration test script:
+
+```bash
+cd cli/kei/scripts
+./integration_check.sh
+```
+
 ## Auth
 
 All `/api/*` endpoints require a bearer token.
