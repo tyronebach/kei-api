@@ -4,7 +4,7 @@ services:
     container_name: kei-api
     restart: unless-stopped
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     volumes:
       - ./data:/app/data
     environment:
@@ -14,3 +14,10 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - household-net
+
+networks:
+  household-net:
+    external: true
+    name: household-net

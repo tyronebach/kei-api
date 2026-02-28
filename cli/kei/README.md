@@ -33,6 +33,15 @@ Or use environment variables:
 - `KEI_API_TOKEN` - Bearer token
 - `KEI_SCOPE` - Default scope
 
+## Scope Standard (Household)
+
+Canonical scopes going forward:
+- `home`
+- `salon`
+- `synthhub` (Thai side business)
+
+API must allow all three via `KEI_VALID_SCOPES`.
+
 ### Per-Agent Tokens
 
 Each agent has its own token for attribution (`created_by`/`updated_by` tracking).
@@ -45,6 +54,16 @@ kei -s salon entity search "kevin"
 
 See [kei-api DEPLOY.md](../kei-api/DEPLOY.md#agent-token-provisioning) for provisioning.
 
+### Recommended Agent Scope Policies
+
+- **Rem**: read/write for `home` + `salon`
+- **Minerva**: read/write for `synthhub`
+- **Anastasia**: read-only for `home` + `salon` + `synthhub`
+
+Example target policies at token provision time:
+- Minerva → `allowed_scopes=["synthhub"]`, `permissions=["read","write"]`
+- Anastasia → `allowed_scopes=["home","salon","synthhub"]`, `permissions=["read"]`
+
 ## Usage
 
 ### Scope
@@ -54,6 +73,7 @@ Every command can take `--scope` / `-s` to namespace data:
 ```bash
 kei -s salon entity search "kevin"
 kei -s home list show shopping
+kei -s synthhub tx list --type expense
 ```
 
 Or set a default scope in config/env.

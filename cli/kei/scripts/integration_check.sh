@@ -7,6 +7,8 @@ set -u -o pipefail
 # 1) Kei API running at KEI_API_BASE (default http://127.0.0.1:8081)
 # 2) KEI_API_TOKEN set (defaults to test-token)
 # 3) CLI virtualenv installed at .venv (auto-bootstrapped by default)
+# 4) Explicit write acknowledgement for safety:
+#    KEI_ALLOW_INTEGRATION_WRITES=I_UNDERSTAND_THIS_WRITES_DATA
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
@@ -49,6 +51,7 @@ API_TOKEN="${KEI_API_TOKEN:-test-token}"
 SALON_SCOPE="${KEI_SALON_SCOPE:-salon}"
 HOME_SCOPE="${KEI_HOME_SCOPE:-home}"
 EXPECT_BOTH_SCOPES="${KEI_EXPECT_BOTH_SCOPES:-0}"
+WRITE_ACK="${KEI_ALLOW_INTEGRATION_WRITES:-}"
 
 TEST_HOME="$(mktemp -d /tmp/kei-cli-home.XXXXXX)"
 trap 'rm -rf "$TEST_HOME"' EXIT
@@ -107,6 +110,13 @@ printf '  API base: %s\n' "$API_BASE"
 printf '  Salon scope: %s\n' "$SALON_SCOPE"
 printf '  Home scope: %s\n' "$HOME_SCOPE"
 printf '  Expect both scopes in by-scope: %s\n\n' "$EXPECT_BOTH_SCOPES"
+
+if [[ "$WRITE_ACK" != "I_UNDERSTAND_THIS_WRITES_DATA" ]]; then
+  echo "[SAFETY] Refusing to run: this script creates real records via API writes."
+  echo "[SAFETY] Set KEI_ALLOW_INTEGRATION_WRITES=I_UNDERSTAND_THIS_WRITES_DATA to proceed."
+  echo "[SAFETY] Use a non-production API base/token/scope when possible."
+  exit 1
+fi
 
 cd "$ROOT_DIR"
 

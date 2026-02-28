@@ -10,6 +10,7 @@ from .config import get_api_base, get_default_scope, load_config, save_config
 from .entities import app as entities_app
 from .items import app as items_app
 from .lists import app as lists_app
+from .recurring import app as recurring_app
 from .services import app as services_app
 from .summary import app as summary_app
 from .transactions import app as transactions_app
@@ -23,6 +24,7 @@ app = typer.Typer(
 # Register subcommands
 app.add_typer(entities_app, name="entity")
 app.add_typer(transactions_app, name="tx")
+app.add_typer(recurring_app, name="recurring")
 app.add_typer(items_app, name="item")
 app.add_typer(services_app, name="service")
 app.add_typer(lists_app, name="list")
