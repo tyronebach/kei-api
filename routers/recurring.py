@@ -519,6 +519,116 @@ def generate_instances(
     }
 
 
+@router.post("/settle")
+def settle_due(
+    scope: str | None = Query(None, description="Scope to settle (omit for all accessible scopes)"),
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    """
+    Materialise all past-due projected instances across every active rule.
+
+    Walks all active recurring rules for the given scope, finds every occurrence
+    where rule_date <= today and no transaction exists yet, and creates the
+    missing transaction rows.
+
+    Idempotent — safe to call repeatedly. Already-confirmed and skipped
+    occurrences are never duplicated.
+
+    Intended to be called on a schedule (e.g. weekly cron) so summaries
+    stay current without manual intervention.
+    """
+    if not agent.can_write():
+        raise HTTPException(status_code=403, detail="Read-only token")
+
+    today = date.today()
+    today_str = today.isoformat()
+
+    q = active_query(db, RecurringRule)
+    q = apply_scope_filter(q, RecurringRule, scope, agent)
+    # Only active rules (not yet ended)
+    q = q.filter(
+        (RecurringRule.end_date.is_(None)) | (RecurringRule.end_date >= today_str)
+    )
+    rules = q.all()
+
+    now = int(time.time())
+    total_created = 0
+    settled: list[dict] = []
+
+    for rule in rules:
+        start = date.fromisoformat(rule.start_date)
+        occurrences = _occurrences_in_range(rule, start, today)
+
+        # Past-due only (rule_date <= today)
+        due = [o for o in occurrences if o <= today]
+        if not due:
+            continue
+
+        # Existing confirmed transactions for this rule
+        existing = {
+            t.rule_date
+            for t in db.query(Transaction.rule_date)
+            .filter(
+                Transaction.rule_id == rule.id,
+                Transaction.deleted_at.is_(None),
+            )
+            .all()
+            if t.rule_date
+        }
+
+        # Skipped dates
+        skipped = {
+            s.skip_date
+            for s in db.query(RecurringSkip.skip_date)
+            .filter(RecurringSkip.rule_id == rule.id)
+            .all()
+        }
+
+        created_dates = []
+        for occ in due:
+            occ_str = occ.isoformat()
+            if occ_str in existing or occ_str in skipped:
+                continue
+            txn = Transaction(
+                scope=rule.scope,
+                type=rule.type,
+                amount=rule.amount,
+                category=rule.category,
+                description=rule.description,
+                date=occ_str,
+                entity_id=rule.entity_id,
+                payment_method=rule.payment_method,
+                tags=rule.tags,
+                meta=rule.meta,
+                rule_id=rule.id,
+                rule_date=occ_str,
+                created_by=agent.agent_id,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(txn)
+            created_dates.append(occ_str)
+
+        if created_dates:
+            total_created += len(created_dates)
+            settled.append({
+                "rule_id": rule.id,
+                "rule_name": rule.name,
+                "created": len(created_dates),
+                "dates": created_dates,
+            })
+
+    db.commit()
+    return {
+        "data": {
+            "total_created": total_created,
+            "rules_settled": len(settled),
+            "settled": settled,
+        }
+    }
+
+
 @router.delete("/{rule_id}")
 def delete_rule(
     rule_id: str,

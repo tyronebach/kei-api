@@ -380,6 +380,13 @@ class KeiClient:
         r = self._delete(f"/api/recurring/{rule_id}")
         return self._handle_response(r)
 
+    def recurring_settle(self, scope: Optional[str] = None) -> dict:
+        params = self._add_scope({})
+        if scope:
+            params["scope"] = scope
+        r = self._post("/api/recurring/settle", params=params)
+        return self._handle_response(r)
+
     # === Summary ===
 
     def summary(self, **params) -> dict:

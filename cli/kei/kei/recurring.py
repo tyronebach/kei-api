@@ -363,6 +363,37 @@ def generate(
             rprint(f"  [dim]{d}[/dim]")
 
 
+@app.command("settle")
+def settle(
+    ctx: typer.Context,
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Only print if something was created"),
+):
+    """Materialise all past-due projected instances across every active rule.
+
+    Safe to run repeatedly — already-confirmed and skipped occurrences are
+    never duplicated. Intended for weekly cron use.
+
+    Example:
+
+      kei -s home recurring settle
+    """
+    client = get_client(ctx)
+    result = client.recurring_settle()
+    data = result.get("data", {})
+    total = data.get("total_created", 0)
+
+    if total == 0:
+        if not quiet:
+            rprint("[dim]✓ All recurring rules up to date — nothing to settle.[/dim]")
+        return
+
+    rprint(f"[green]✓ Settled {total} transaction(s) across {data.get('rules_settled')} rule(s)[/green]")
+    for rule in data.get("settled", []):
+        rprint(f"  [bold]{rule['rule_name']}[/bold] — {rule['created']} tx")
+        for d in rule["dates"]:
+            rprint(f"    [dim]{d}[/dim]")
+
+
 @app.command("delete")
 def delete(
     ctx: typer.Context,

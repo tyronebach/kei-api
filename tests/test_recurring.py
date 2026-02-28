@@ -251,6 +251,51 @@ def test_generate_skips_skipped_dates(db_session, admin_agent):
 
 
 # ---------------------------------------------------------------------------
+# Settle
+# ---------------------------------------------------------------------------
+
+def test_settle_materialises_past_due(db_session, admin_agent):
+    # Rule starting in the past → occurrences up to today should be settled
+    _make_rule(db_session, admin_agent, start_date="2026-01-01", name="Rent")
+    _make_rule(db_session, admin_agent, name="Netflix", amount=20.0,
+               category="bills", start_date="2026-01-01", day_of_month=None)
+
+    result = recurring.settle_due(scope="home", agent=admin_agent, db=db_session)
+    data = result["data"]
+    assert data["total_created"] > 0
+    assert data["rules_settled"] == 2
+
+
+def test_settle_is_idempotent(db_session, admin_agent):
+    _make_rule(db_session, admin_agent, start_date="2026-01-01")
+
+    first = recurring.settle_due(scope="home", agent=admin_agent, db=db_session)
+    created_first = first["data"]["total_created"]
+    assert created_first > 0
+
+    second = recurring.settle_due(scope="home", agent=admin_agent, db=db_session)
+    assert second["data"]["total_created"] == 0
+
+
+def test_settle_skips_skipped_dates(db_session, admin_agent):
+    rule = _make_rule(db_session, admin_agent, start_date="2026-01-01")
+    recurring.skip_occurrence(rule.id, skip_date="2026-01-01",
+                              agent=admin_agent, db=db_session)
+
+    result = recurring.settle_due(scope="home", agent=admin_agent, db=db_session)
+    # Jan 1 should not be created
+    for entry in result["data"]["settled"]:
+        if entry["rule_id"] == rule.id:
+            assert "2026-01-01" not in entry["dates"]
+
+
+def test_settle_read_only_denied(db_session, read_only_agent):
+    with pytest.raises(HTTPException) as exc:
+        recurring.settle_due(scope="home", agent=read_only_agent, db=db_session)
+    assert exc.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
 # Scope enforcement
 # ---------------------------------------------------------------------------
 
