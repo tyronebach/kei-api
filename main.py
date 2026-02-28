@@ -4,12 +4,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from db.connection import SessionLocal
-from routers import entities, items, lists, services, summary, transactions
+from routers import entities, items, lists, recurring, services, summary, transactions
 
 app = FastAPI(title="Kei API", version="0.2.0")
 
 app.include_router(entities.router)
 app.include_router(transactions.router)
+app.include_router(recurring.router)
 app.include_router(items.router)
 app.include_router(services.router)
 app.include_router(lists.router)

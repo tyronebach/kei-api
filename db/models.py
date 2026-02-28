@@ -1,7 +1,7 @@
 import time
 import uuid
 
-from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,6 +36,59 @@ class Entity(Base):
     updated_at: Mapped[int] = mapped_column(Integer, default=_now, onupdate=_now)
 
 
+class RecurringRule(Base):
+    """Template for a recurring income or expense."""
+
+    __tablename__ = "recurring_rules"
+    __table_args__ = (
+        Index("idx_recurring_rules_scope", "scope"),
+        Index("idx_recurring_rules_active", "scope", "deleted_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_generate_id)
+    scope: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    type: Mapped[str] = mapped_column(String, nullable=False)   # income | expense
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    # Frequency: monthly | weekly | biweekly | yearly | custom
+    # custom uses interval as number of days between occurrences
+    frequency: Mapped[str] = mapped_column(String, nullable=False)
+    interval: Mapped[int] = mapped_column(Integer, default=1)
+    day_of_month: Mapped[int | None] = mapped_column(Integer)   # monthly only (1-28)
+    start_date: Mapped[str] = mapped_column(String, nullable=False)
+    end_date: Mapped[str | None] = mapped_column(String)        # null = ongoing
+    description: Mapped[str | None] = mapped_column(Text)
+    entity_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("entities.id", ondelete="SET NULL"),
+    )
+    payment_method: Mapped[str | None] = mapped_column(String)
+    tags: Mapped[list | None] = mapped_column(JSON)
+    meta: Mapped[dict | None] = mapped_column(JSON)
+    created_by: Mapped[str | None] = mapped_column(String)
+    updated_by: Mapped[str | None] = mapped_column(String)
+    deleted_at: Mapped[int | None] = mapped_column(Integer, index=True)
+    created_at: Mapped[int] = mapped_column(Integer, default=_now)
+    updated_at: Mapped[int] = mapped_column(Integer, default=_now, onupdate=_now)
+
+
+class RecurringSkip(Base):
+    """Tracks skipped occurrences for a recurring rule."""
+
+    __tablename__ = "recurring_skips"
+    __table_args__ = (
+        Index("idx_recurring_skips_rule", "rule_id"),
+        UniqueConstraint("rule_id", "skip_date", name="uq_recurring_skip_rule_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_generate_id)
+    rule_id: Mapped[str] = mapped_column(
+        String, ForeignKey("recurring_rules.id", ondelete="CASCADE"), nullable=False,
+    )
+    skip_date: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, default=_now)
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (
@@ -43,6 +96,7 @@ class Transaction(Base):
         Index("idx_transactions_date", "date"),
         Index("idx_transactions_type", "type"),
         Index("idx_transactions_category", "category"),
+        Index("idx_transactions_rule", "rule_id"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_generate_id)
@@ -59,6 +113,11 @@ class Transaction(Base):
     tags: Mapped[list | None] = mapped_column(JSON)
     payment_method: Mapped[str | None] = mapped_column(String)
     meta: Mapped[dict | None] = mapped_column(JSON)
+    # Recurring rule linkage (null for one-off transactions)
+    rule_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("recurring_rules.id", ondelete="SET NULL"),
+    )
+    rule_date: Mapped[str | None] = mapped_column(String)  # canonical occurrence date
     created_by: Mapped[str | None] = mapped_column(String)
     updated_by: Mapped[str | None] = mapped_column(String)
     deleted_at: Mapped[int | None] = mapped_column(Integer, index=True)
