@@ -21,6 +21,8 @@ docker run -p 8081:8081 -e KEI_API_TOKEN=your-secret -v kei-data:/app/data kei-a
 
 Deployment and operations runbook: `DEPLOY.md`.
 
+⚠️ On startup, Kei API now fails fast if `KEI_API_TOKEN` is left as `changeme` (unless `KEI_ALLOW_INSECURE_DEFAULT_TOKEN=true`). This prevents accidental insecure exposure.
+
 ## Integrated CLI
 
 This repo includes the Kei CLI at `cli/kei` for agent-facing commands.
@@ -65,9 +67,11 @@ The `/health` endpoint is public.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KEI_API_TOKEN` | `changeme` | Legacy admin fallback token |
+| `KEI_API_TOKEN` | `changeme` | Legacy admin fallback token. **Must be overridden in real deployments** |
 | `KEI_DATABASE_URL` | `sqlite:///./data/kei.db` | SQLite database path |
 | `KEI_VALID_SCOPES` | `["salon","home"]` | Allowed scopes (JSON list) |
+| `KEI_CORS_ORIGINS` | `[]` | Browser allowlist (JSON array). Keep empty unless you need frontend access |
+| `KEI_ALLOW_INSECURE_DEFAULT_TOKEN` | `false` | Local-only escape hatch to permit default `changeme` token |
 
 ## Scope
 

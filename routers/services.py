@@ -41,7 +41,7 @@ def list_services(
     category: str | None = None,
     tag: str | None = None,
     limit: int = Query(50, le=200),
-    offset: int = 0,
+    offset: int = Query(0, ge=0),
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):

@@ -162,7 +162,7 @@ def list_rules(
     category: str | None = None,
     active_only: bool = Query(True, description="Exclude rules whose end_date has passed"),
     limit: int = Query(50, le=200),
-    offset: int = 0,
+    offset: int = Query(0, ge=0),
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):

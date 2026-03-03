@@ -1,4 +1,5 @@
 import hashlib
+import secrets
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, status
@@ -52,7 +53,7 @@ def get_current_agent(
         )
 
     # Backward-compatible admin token.
-    if credentials.credentials == settings.api_token:
+    if secrets.compare_digest(credentials.credentials, settings.api_token):
         return AgentPrincipal(
             agent_id="admin",
             allowed_scopes=["*"],
@@ -68,7 +69,7 @@ def get_current_agent(
 def verify_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> str:
-    if credentials.credentials != settings.api_token:
+    if not secrets.compare_digest(credentials.credentials, settings.api_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",

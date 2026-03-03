@@ -1,12 +1,23 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from config import settings
 from db.connection import SessionLocal
 from routers import entities, items, lists, recurring, services, summary, transactions
 
 app = FastAPI(title="Kei API", version="0.2.0")
+
+if settings.cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
 app.include_router(entities.router)
 app.include_router(transactions.router)
@@ -15,6 +26,18 @@ app.include_router(items.router)
 app.include_router(services.router)
 app.include_router(lists.router)
 app.include_router(summary.router)
+
+
+@app.on_event("startup")
+def startup_safety_checks():
+    if (
+        settings.api_token == "changeme"
+        and not settings.allow_insecure_default_token
+    ):
+        raise RuntimeError(
+            "KEI_API_TOKEN is using the insecure default 'changeme'. "
+            "Set a strong KEI_API_TOKEN or set KEI_ALLOW_INSECURE_DEFAULT_TOKEN=true for local-only testing."
+        )
 
 
 @app.exception_handler(HTTPException)
