@@ -9,7 +9,7 @@ services:
       - ./data:/app/data
     environment:
       - KEI_API_TOKEN=${KEI_API_TOKEN:-test-token}
-      - KEI_VALID_SCOPES=["salon","home","synthhub","woodwards"]
+      - KEI_VALID_SCOPES=${KEI_VALID_SCOPES:-["salon","home"]}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
       interval: 30s

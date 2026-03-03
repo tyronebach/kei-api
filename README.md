@@ -69,7 +69,7 @@ The `/health` endpoint is public.
 |----------|---------|-------------|
 | `KEI_API_TOKEN` | `changeme` | Legacy admin fallback token. **Must be overridden in real deployments** |
 | `KEI_DATABASE_URL` | `sqlite:///./data/kei.db` | SQLite database path |
-| `KEI_VALID_SCOPES` | `["salon","home"]` | Allowed scopes (JSON list) |
+| `KEI_VALID_SCOPES` | `["salon","home"]` | Allowed scopes (JSON list). Put your real scope set in local `.env` (not committed) |
 | `KEI_CORS_ORIGINS` | `[]` | Browser allowlist (JSON array). Keep empty unless you need frontend access |
 | `KEI_ALLOW_INSECURE_DEFAULT_TOKEN` | `false` | Local-only escape hatch to permit default `changeme` token |
 
