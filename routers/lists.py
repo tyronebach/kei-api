@@ -22,8 +22,9 @@ def get_lists(
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
-    """Return distinct list names with item counts."""
+    """Return distinct (scope, list) pairs with item counts."""
     q = db.query(
+        ListItem.scope,
         ListItem.list,
         func.count(ListItem.id).label("total"),
         func.sum(ListItem.checked).label("checked_count"),
@@ -34,11 +35,12 @@ def get_lists(
         q = q.filter(ListItem.scope == scope)
     elif "*" not in agent.allowed_scopes:
         q = q.filter(ListItem.scope.in_(agent.allowed_scopes))
-    rows = q.group_by(ListItem.list).order_by(ListItem.list).all()
+    rows = q.group_by(ListItem.scope, ListItem.list).order_by(ListItem.scope, ListItem.list).all()
 
     return {
         "data": [
             {
+                "scope": r.scope,
                 "list": r.list,
                 "total": r.total,
                 "checked": int(r.checked_count or 0),
