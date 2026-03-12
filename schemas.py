@@ -108,6 +108,7 @@ class TransactionCreate(StrictInput):
     external_id: str | None = None
     tags: list[str] | None = None
     payment_method: str | None = None
+    manually_enriched: bool = False
     meta: dict | None = None
     force_create: bool = False  # if True, skip fuzzy duplicate check
 
@@ -133,6 +134,7 @@ class TransactionUpdate(StrictInput):
     entity_id: str | None = None
     tags: list[str] | None = None
     payment_method: str | None = None
+    manually_enriched: bool | None = None
     meta: dict | None = None
 
     @field_validator("date")
@@ -156,6 +158,7 @@ class TransactionOut(BaseModel):
     external_id: str | None = None
     tags: list[str] | None = None
     payment_method: str | None = None
+    manually_enriched: bool = False
     meta: dict | None = None
     created_by: str | None = None
     updated_by: str | None = None

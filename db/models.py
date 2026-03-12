@@ -62,6 +62,7 @@ class Transaction(Base):
     external_id: Mapped[str | None] = mapped_column(String)
     tags: Mapped[list | None] = mapped_column(JSON)
     payment_method: Mapped[str | None] = mapped_column(String)
+    manually_enriched: Mapped[bool] = mapped_column(Integer, default=False, server_default="0", nullable=False)
     meta: Mapped[dict | None] = mapped_column(JSON)
     created_by: Mapped[str | None] = mapped_column(String)
     updated_by: Mapped[str | None] = mapped_column(String)

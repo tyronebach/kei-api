@@ -221,6 +221,76 @@ def test_transactions_crud(db_session, admin_agent):
     assert exc.value.status_code == 404
 
 
+def test_manually_enriched_flag_persists(db_session, admin_agent):
+    """PATCH a transaction with manually_enriched=True → flag persists on subsequent GET."""
+    created = _create_txn(db_session, admin_agent)
+    txn_id = created.id
+    assert created.manually_enriched is False
+
+    updated = transactions.update_transaction(
+        txn_id,
+        TransactionUpdate(manually_enriched=True),
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert updated["data"].manually_enriched is True
+
+    fetched = transactions.get_transaction(txn_id, agent=admin_agent, db=db_session)
+    assert fetched["data"].manually_enriched is True
+
+
+def test_manually_enriched_in_list_response(db_session, admin_agent):
+    """manually_enriched is included in transaction list responses."""
+    _create_txn(db_session, admin_agent, category="haircut", date="2026-02-10")
+    # Create a second one with manually_enriched=True via update
+    created2 = _create_txn(db_session, admin_agent, category="color", date="2026-02-11", force_create=True)
+    transactions.update_transaction(
+        created2.id,
+        TransactionUpdate(manually_enriched=True),
+        agent=admin_agent,
+        db=db_session,
+    )
+
+    result = transactions.list_transactions(
+        scope="salon",
+        from_date=None,
+        to_date=None,
+        sort="date",
+        limit=50,
+        offset=0,
+        agent=admin_agent,
+        db=db_session,
+    )
+    txns = result["data"]
+    assert len(txns) == 2
+    flags = {t.category: t.manually_enriched for t in txns}
+    assert flags["haircut"] is False
+    assert flags["color"] is True
+
+
+def test_force_create_and_manually_enriched_dont_interfere(db_session, admin_agent):
+    """force_create + manually_enriched can be combined without conflict."""
+    result = transactions.create_transaction(
+        TransactionCreate(
+            scope="salon",
+            type="expense",
+            amount=50.0,
+            category="supplies",
+            date="2026-03-10",
+            description="Manual enriched forced",
+            force_create=True,
+            manually_enriched=True,
+        ),
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert result.get("created") is True
+    assert result["data"].manually_enriched is True
+
+    fetched = transactions.get_transaction(result["data"].id, agent=admin_agent, db=db_session)
+    assert fetched["data"].manually_enriched is True
+
+
 def test_transaction_filters(db_session, admin_agent):
     _create_txn(db_session, admin_agent, category="haircut", date="2026-02-01", amount=60.0)
     _create_txn(db_session, admin_agent, category="color", date="2026-02-15", amount=120.0)
