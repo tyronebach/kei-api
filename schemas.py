@@ -109,6 +109,7 @@ class TransactionCreate(StrictInput):
     tags: list[str] | None = None
     payment_method: str | None = None
     meta: dict | None = None
+    force_create: bool = False  # if True, skip fuzzy duplicate check
 
     @field_validator("date")
     @classmethod

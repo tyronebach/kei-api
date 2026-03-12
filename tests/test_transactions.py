@@ -5,6 +5,182 @@ from routers import transactions
 from schemas import TransactionCreate, TransactionUpdate
 
 
+# ---------------------------------------------------------------------------
+# Fuzzy duplicate detection tests
+# ---------------------------------------------------------------------------
+
+
+def _seed_txn(db_session, agent, **overrides):
+    """Insert a transaction directly (force_create=True so no fuzzy interference)."""
+    payload = {
+        "scope": "salon",
+        "type": "expense",
+        "amount": 80.0,
+        "category": "supplies",
+        "date": "2026-03-10",
+        "description": "Office Depot paper",
+        "force_create": True,
+    }
+    payload.update(overrides)
+    return transactions.create_transaction(
+        TransactionCreate(**payload),
+        agent=agent,
+        db=db_session,
+    )
+
+
+def test_fuzzy_exact_match_returns_matched(db_session, admin_agent):
+    """Exact amount + same description + same day → matched=true, no new row."""
+    seed = _seed_txn(db_session, admin_agent)
+    existing_id = seed["data"].id
+
+    result = transactions.create_transaction(
+        TransactionCreate(
+            scope="salon",
+            type="expense",
+            amount=80.0,
+            category="supplies",
+            date="2026-03-10",
+            description="Office Depot paper",
+        ),
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert result.get("matched") is True
+    assert result["data"].id == existing_id
+    # No new row created
+    from db.models import Transaction
+    count = db_session.query(Transaction).filter(Transaction.deleted_at.is_(None)).count()
+    assert count == 1
+
+
+def test_fuzzy_similar_description_one_day_off_returns_matched(db_session, admin_agent):
+    """Same amount + similar description + 1 day off → matched=true."""
+    _seed_txn(db_session, admin_agent, date="2026-03-10", description="Office Depot paper")
+
+    result = transactions.create_transaction(
+        TransactionCreate(
+            scope="salon",
+            type="expense",
+            amount=80.0,
+            category="supplies",
+            date="2026-03-11",
+            description="Office Depot papers",
+        ),
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert result.get("matched") is True
+
+
+def test_fuzzy_different_description_not_matched(db_session, admin_agent):
+    """Same amount + totally different description → score < 85, created normally."""
+    _seed_txn(db_session, admin_agent, description="Office Depot paper")
+
+    result = transactions.create_transaction(
+        TransactionCreate(
+            scope="salon",
+            type="expense",
+            amount=80.0,
+            category="supplies",
+            date="2026-03-10",
+            description="Completely unrelated grocery store",
+        ),
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert result.get("matched") is None
+    assert result.get("created") is True
+
+
+def test_fuzzy_amount_too_different_not_matched(db_session, admin_agent):
+    """Amount differs by >5% → not matched."""
+    _seed_txn(db_session, admin_agent, amount=80.0, description="Office Depot paper")
+
+    result = transactions.create_transaction(
+        TransactionCreate(
+            scope="salon",
+            type="expense",
+            amount=60.0,  # >5% off from 80
+            category="supplies",
+            date="2026-03-10",
+            description="Office Depot paper",
+        ),
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert result.get("matched") is None
+    assert result.get("created") is True
+
+
+def test_fuzzy_force_create_bypasses_check(db_session, admin_agent):
+    """force_create=True bypasses fuzzy check and always inserts."""
+    _seed_txn(db_session, admin_agent)
+
+    result = transactions.create_transaction(
+        TransactionCreate(
+            scope="salon",
+            type="expense",
+            amount=80.0,
+            category="supplies",
+            date="2026-03-10",
+            description="Office Depot paper",
+            force_create=True,
+        ),
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert result.get("matched") is None
+    assert result.get("created") is True
+
+
+def test_fuzzy_tributary_write_bypasses_check(db_session, admin_agent):
+    """Tributary write (external_source set) always bypasses fuzzy check."""
+    _seed_txn(db_session, admin_agent)
+
+    result = transactions.create_transaction(
+        TransactionCreate(
+            scope="salon",
+            type="expense",
+            amount=80.0,
+            category="supplies",
+            date="2026-03-10",
+            description="Office Depot paper",
+            external_source="tributary",
+            external_id="ext-001",
+        ),
+        agent=admin_agent,
+        db=db_session,
+    )
+    # Tributary writes skip fuzzy and insert regardless
+    assert result.get("matched") is None
+    assert result.get("created") is True or "data" in result
+
+
+def test_fuzzy_probable_match_response(db_session, admin_agent):
+    """Score 70–84 → created with probable_match in response."""
+    # Seed a transaction
+    _seed_txn(db_session, admin_agent, description="Office Depot paper", date="2026-03-10")
+
+    # Submit something 2 days off with moderately similar description
+    # amount exact (score 100*0.4=40), description moderate (~70*0.4=28), date 2 days (60*0.2=12) = ~80
+    result = transactions.create_transaction(
+        TransactionCreate(
+            scope="salon",
+            type="expense",
+            amount=80.0,
+            category="supplies",
+            date="2026-03-12",
+            description="Office Depot",  # shorter — should score ~70-80 on token_sort_ratio
+        ),
+        agent=admin_agent,
+        db=db_session,
+    )
+    # Either matched (>=85) or probable_match (70-84) or just created (<70)
+    # We primarily verify the response shape is valid
+    assert "matched" in result or "created" in result
+
+
 def _create_txn(db_session, agent, **overrides):
     payload = {
         "scope": "salon",

@@ -1,6 +1,8 @@
 import time
+from datetime import date as date_type, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
 
 from db.connection import get_db
@@ -17,6 +19,82 @@ router = APIRouter(
 
 def _dollars_to_cents(amount: float) -> int:
     return round(amount * 100)
+
+
+def _fuzzy_score(
+    new_amount_cents: int,
+    new_description: str | None,
+    new_date: str,
+    candidate: Transaction,
+) -> int:
+    """Return a 0-100 duplicate likelihood score for a candidate transaction.
+
+    Weights: amount 40%, description 40%, date 20%.
+    Returns 0 immediately if amount is too far off or date is outside ±3 days.
+    """
+    # Amount score — must be close or we don't bother
+    if candidate.amount == new_amount_cents:
+        amount_score = 100
+    elif abs(candidate.amount - new_amount_cents) / max(new_amount_cents, 1) <= 0.05:
+        amount_score = 80
+    else:
+        return 0
+
+    # Description score — 0 when either side is null
+    if new_description is None or candidate.description is None:
+        desc_score = 0
+    else:
+        desc_score = fuzz.token_sort_ratio(new_description, candidate.description)
+
+    # Date proximity score
+    new_d = date_type.fromisoformat(new_date)
+    cand_d = date_type.fromisoformat(candidate.date)
+    days_diff = abs((new_d - cand_d).days)
+    if days_diff == 0:
+        date_score = 100
+    elif days_diff == 1:
+        date_score = 80
+    elif days_diff == 2:
+        date_score = 60
+    elif days_diff == 3:
+        date_score = 40
+    else:
+        return 0  # outside window (shouldn't happen given DB filter, but be safe)
+
+    return int(amount_score * 0.4 + desc_score * 0.4 + date_score * 0.2)
+
+
+def _find_fuzzy_duplicate(
+    body: TransactionCreate,
+    amount_cents: int,
+    db: Session,
+) -> tuple[Transaction | None, int]:
+    """Query ±3-day window and return (best_candidate, score), or (None, 0)."""
+    new_d = date_type.fromisoformat(body.date)
+    date_min = (new_d - timedelta(days=3)).isoformat()
+    date_max = (new_d + timedelta(days=3)).isoformat()
+
+    candidates = (
+        db.query(Transaction)
+        .filter(
+            Transaction.scope == body.scope,
+            Transaction.type == body.type,
+            Transaction.deleted_at.is_(None),
+            Transaction.date >= date_min,
+            Transaction.date <= date_max,
+        )
+        .all()
+    )
+
+    best: Transaction | None = None
+    best_score = 0
+    for c in candidates:
+        score = _fuzzy_score(amount_cents, body.description, body.date, c)
+        if score > best_score:
+            best_score = score
+            best = c
+
+    return best, best_score
 
 
 def _validate_entity_scope(entity_id: str | None, scope: str, db: Session) -> None:
@@ -61,16 +139,39 @@ def create_transaction(
         if existing is not None:
             return {"data": TransactionOut.from_orm_cents(existing)}
 
-    # Build ORM dict; exclude 'amount' (handle separately as cents)
-    data = body.model_dump(exclude_none=True, exclude={"amount"})
-    data["amount"] = _dollars_to_cents(body.amount)
+    amount_cents = _dollars_to_cents(body.amount)
+
+    # Step 3: fuzzy duplicate detection (manual writes only — skip if Tributary or force_create)
+    probable_match: Transaction | None = None
+    probable_score: int = 0
+    if not body.external_source and not body.force_create:
+        match, score = _find_fuzzy_duplicate(body, amount_cents, db)
+        if match is not None and score >= 85:
+            # High-confidence duplicate — do not insert
+            return {"matched": True, "data": TransactionOut.from_orm_cents(match)}
+        if match is not None and score >= 70:
+            # Probable match — capture before insert, surface to caller after
+            probable_match = match
+            probable_score = score
+
+    # Build ORM dict; exclude 'amount' and 'force_create' (handle separately or not stored)
+    data = body.model_dump(exclude_none=True, exclude={"amount", "force_create"})
+    data["amount"] = amount_cents
     data["created_by"] = agent.agent_id
 
     txn = Transaction(**data)
     db.add(txn)
     db.commit()
     db.refresh(txn)
-    return {"data": TransactionOut.from_orm_cents(txn)}
+
+    if probable_match is not None:
+        return {
+            "created": True,
+            "probable_match": TransactionOut.from_orm_cents(probable_match),
+            "match_score": probable_score,
+        }
+
+    return {"created": True, "data": TransactionOut.from_orm_cents(txn)}
 
 
 @router.get("")
