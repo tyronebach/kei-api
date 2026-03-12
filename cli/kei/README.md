@@ -35,12 +35,13 @@ Or use environment variables:
 
 ## Scope Standard (Household)
 
-Canonical scopes going forward:
+Canonical scopes:
 - `home`
 - `salon`
-- `synthhub` (Thai side business)
+- `woodwards`
+- `synthhub`
 
-API must allow all three via `KEI_VALID_SCOPES`.
+Configure via `KEI_VALID_SCOPES=["home","salon","woodwards","synthhub"]`.
 
 ### Per-Agent Tokens
 

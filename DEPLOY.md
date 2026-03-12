@@ -16,7 +16,7 @@ Required variables:
 |---|---|---|
 | `KEI_DATABASE_URL` | `sqlite:///./data/kei.db` | SQLite database URL |
 | `KEI_API_TOKEN` | `changeme` | Legacy admin token fallback |
-| `KEI_VALID_SCOPES` | `["salon","home"]` | JSON list; write scopes are validated against this |
+| `KEI_VALID_SCOPES` | `["home","salon","woodwards","synthhub"]` | JSON list; write scopes are validated against this |
 
 Create `.env` from example:
 
@@ -96,7 +96,7 @@ Rollback one revision:
 |--------|---------|
 | `agent_id` | Unique agent name (e.g., `rem`, `satella`) |
 | `token_hash` | SHA-256 of the raw token |
-| `allowed_scopes` | JSON list of scopes the agent can access (e.g., `["salon","home"]`) |
+| `allowed_scopes` | JSON list of scopes the agent can access (e.g., `["home","salon","woodwards","synthhub"]`) |
 | `permissions` | JSON list: `["read"]` or `["read","write"]` |
 
 ### Token file convention
@@ -116,9 +116,9 @@ export KEI_API_TOKEN=$(cat ~/.config/kei/tokens/rem)
 
 | Agent | Scopes | Permissions |
 |-------|--------|-------------|
-| rem | salon, home | read, write |
-| satella | salon, home | read |
-| beatrice | salon, home | read, write |
+| rem | home, salon, woodwards, synthhub | read, write |
+| satella | home, salon, woodwards, synthhub | read |
+| beatrice | home, salon, woodwards, synthhub | read, write |
 
 ### Provisioning a new token
 
@@ -129,7 +129,7 @@ from sqlalchemy import create_engine, text
 from config import settings
 
 agent_id = "new-agent"
-allowed_scopes_json = '["salon","home"]'
+allowed_scopes_json = '["home","salon","woodwards","synthhub"]'
 permissions_json = '["read","write"]'
 
 raw_token = secrets.token_urlsafe(32)
