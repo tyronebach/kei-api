@@ -65,10 +65,12 @@ def _period_totals(
     agent: AgentPrincipal,
     scope: str | None = None,
 ) -> dict:
-    """Compute income/expense totals for a date range."""
+    """Compute income/expense totals for a date range.
+    Amounts are stored as integer cents; output is dollars (divided by 100).
+    """
     q = db.query(
         Transaction.type,
-        func.sum(Transaction.amount).label("total"),
+        func.sum(Transaction.amount).label("total_cents"),
         func.count().label("count"),
     ).filter(
         Transaction.date >= start,
@@ -80,7 +82,7 @@ def _period_totals(
     income = {"total": 0.0, "count": 0}
     expenses = {"total": 0.0, "count": 0}
     for row in rows:
-        bucket = {"total": round(row.total, 2), "count": row.count}
+        bucket = {"total": round((row.total_cents or 0) / 100, 2), "count": row.count}
         if row.type == "income":
             income = bucket
         elif row.type == "expense":
@@ -105,7 +107,7 @@ def get_summary(
     # Top income categories
     top_income_q = db.query(
         Transaction.category,
-        func.sum(Transaction.amount).label("total"),
+        func.sum(Transaction.amount).label("total_cents"),
         func.count().label("count"),
     ).filter(
         Transaction.date >= start,
@@ -124,7 +126,7 @@ def get_summary(
     # Top expense categories
     top_expense_q = db.query(
         Transaction.category,
-        func.sum(Transaction.amount).label("total"),
+        func.sum(Transaction.amount).label("total_cents"),
         func.count().label("count"),
     ).filter(
         Transaction.date >= start,
@@ -175,7 +177,7 @@ def get_summary(
 
     def _fmt_cats(rows):
         return [
-            {"category": c.category, "total": round(c.total, 2), "count": c.count}
+            {"category": c.category, "total": round(c.total_cents / 100, 2), "count": c.count}
             for c in rows
         ]
 
@@ -272,7 +274,7 @@ def get_summary_by_scope(
     q = db.query(
         Transaction.scope,
         Transaction.type,
-        func.sum(Transaction.amount).label("total"),
+        func.sum(Transaction.amount).label("total_cents"),
         func.count().label("count"),
     ).filter(
         Transaction.date >= start,
@@ -290,7 +292,7 @@ def get_summary_by_scope(
                 "income": {"total": 0.0, "count": 0},
                 "expenses": {"total": 0.0, "count": 0},
             }
-        bucket = {"total": round(row.total, 2), "count": row.count}
+        bucket = {"total": round((row.total_cents or 0) / 100, 2), "count": row.count}
         if row.type == "income":
             per_scope[row.scope]["income"] = bucket
         elif row.type == "expense":
@@ -325,7 +327,7 @@ def get_by_day(
         literal_column("CAST(strftime('%w', transactions.date) AS INTEGER)").label(
             "dow"
         ),
-        func.sum(Transaction.amount).label("total"),
+        func.sum(Transaction.amount).label("total_cents"),
         func.count().label("count"),
     ).filter(
         Transaction.date >= start,
@@ -344,7 +346,7 @@ def get_by_day(
         idx = sqlite_to_monday[row.dow]
         by_day[idx] = {
             "day": DAY_NAMES[idx],
-            "total": round(row.total, 2),
+            "total": round((row.total_cents or 0) / 100, 2),
             "count": row.count,
         }
 

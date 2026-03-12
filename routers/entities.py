@@ -155,7 +155,7 @@ def get_entity_insights(
             "name": e.name,
             "type": e.type,
             "visit_count": a.visit_count if a else 0,
-            "total_spend": round(a.total_spend, 2) if a else 0,
+            "total_spend": round((a.total_spend or 0) / 100, 2) if a else 0,
             "last_visit": a.last_visit if a else None,
         }
 
@@ -223,7 +223,7 @@ def get_entity_activity(
 
     avg_spend = 0.0
     if stats.visit_count:
-        avg_spend = round(stats.total_spend / stats.visit_count, 2)
+        avg_spend = round((stats.total_spend / stats.visit_count) / 100, 2)
 
     # Category breakdown
     categories = (
@@ -259,7 +259,7 @@ def get_entity_activity(
     return {
         "data": {
             **entity_out.model_dump(),
-            "total_spend": round(float(stats.total_spend), 2),
+            "total_spend": round(float(stats.total_spend) / 100, 2),
             "visit_count": stats.visit_count,
             "first_visit": stats.first_visit,
             "last_visit": stats.last_visit,
@@ -267,7 +267,7 @@ def get_entity_activity(
             "by_category": [
                 {
                     "category": c.category,
-                    "total": round(c.total, 2),
+                    "total": round((c.total or 0) / 100, 2),
                     "count": c.count,
                 }
                 for c in categories
@@ -276,7 +276,7 @@ def get_entity_activity(
                 {
                     "id": t.id,
                     "type": t.type,
-                    "amount": t.amount,
+                    "amount": round(t.amount / 100, 2),
                     "category": t.category,
                     "description": t.description,
                     "date": t.date,
