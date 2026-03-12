@@ -91,16 +91,21 @@ class EntitySearchOut(EntityOut):
 
 
 # --- Transactions ---
+# Amounts are stored as integer cents internally.
+# API input/output uses float dollars (e.g. 80.00).
+# Conversion: dollars → cents on ingest, cents → dollars on output.
 
 
 class TransactionCreate(StrictInput):
     scope: str
     type: Literal["income", "expense"]
-    amount: float = Field(gt=0)
+    amount: float = Field(gt=0)  # dollars, converted to cents on write
     category: str
     description: str | None = None
     date: str
     entity_id: str | None = None
+    external_source: str | None = None
+    external_id: str | None = None
     tags: list[str] | None = None
     payment_method: str | None = None
     meta: dict | None = None
@@ -110,11 +115,17 @@ class TransactionCreate(StrictInput):
     def validate_date(cls, value: str) -> str:
         return _validate_date_str(value)
 
+    @model_validator(mode="after")
+    def validate_external_identity(self):
+        if (self.external_source is None) != (self.external_id is None):
+            raise ValueError("external_source and external_id must both be set or both be absent")
+        return self
+
 
 class TransactionUpdate(StrictInput):
     scope: str | None = None
     type: Literal["income", "expense"] | None = None
-    amount: float | None = Field(default=None, gt=0)
+    amount: float | None = Field(default=None, gt=0)  # dollars
     category: str | None = None
     description: str | None = None
     date: str | None = None
@@ -135,22 +146,29 @@ class TransactionOut(BaseModel):
     id: str
     scope: str
     type: str
-    amount: float
+    amount: float  # dollars (cents / 100)
     category: str
     description: str | None = None
     date: str
     entity_id: str | None = None
+    external_source: str | None = None
+    external_id: str | None = None
     tags: list[str] | None = None
     payment_method: str | None = None
     meta: dict | None = None
-    rule_id: str | None = None
-    rule_date: str | None = None
     created_by: str | None = None
     updated_by: str | None = None
     created_at: int
     updated_at: int
 
     model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_orm_cents(cls, obj) -> "TransactionOut":
+        """Convert ORM object with integer cents to dollar-based output."""
+        data = {c.key: getattr(obj, c.key) for c in obj.__table__.columns}
+        data["amount"] = round(obj.amount / 100, 2)
+        return cls.model_validate(data)
 
 
 # --- Items ---
@@ -304,111 +322,3 @@ class ServiceOut(BaseModel):
     updated_at: int
 
     model_config = {"from_attributes": True}
-
-
-# --- Recurring Rules ---
-
-_VALID_FREQUENCIES = {"monthly", "weekly", "biweekly", "yearly", "custom"}
-
-
-class RecurringRuleCreate(StrictInput):
-    scope: str
-    name: str = Field(min_length=1)
-    type: Literal["income", "expense"]
-    amount: float = Field(gt=0)
-    category: str = Field(min_length=1)
-    frequency: str
-    interval: int = Field(default=1, ge=1)
-    day_of_month: int | None = Field(default=None, ge=1, le=28)
-    start_date: str
-    end_date: str | None = None
-    description: str | None = None
-    entity_id: str | None = None
-    payment_method: str | None = None
-    tags: list[str] | None = None
-    meta: dict | None = None
-
-    @field_validator("frequency")
-    @classmethod
-    def validate_frequency(cls, v: str) -> str:
-        if v not in _VALID_FREQUENCIES:
-            raise ValueError(f"frequency must be one of: {', '.join(sorted(_VALID_FREQUENCIES))}")
-        return v
-
-    @field_validator("start_date", "end_date", mode="before")
-    @classmethod
-    def validate_dates(cls, v):
-        if v is not None:
-            _validate_date_str(v)
-        return v
-
-
-class RecurringRuleUpdate(StrictInput):
-    name: str | None = Field(default=None, min_length=1)
-    amount: float | None = Field(default=None, gt=0)
-    category: str | None = None
-    frequency: str | None = None
-    interval: int | None = Field(default=None, ge=1)
-    day_of_month: int | None = Field(default=None, ge=1, le=28)
-    end_date: str | None = None
-    description: str | None = None
-    entity_id: str | None = None
-    payment_method: str | None = None
-    tags: list[str] | None = None
-    meta: dict | None = None
-
-    @field_validator("frequency")
-    @classmethod
-    def validate_frequency(cls, v: str | None) -> str | None:
-        if v is not None and v not in _VALID_FREQUENCIES:
-            raise ValueError(f"frequency must be one of: {', '.join(sorted(_VALID_FREQUENCIES))}")
-        return v
-
-    @field_validator("end_date", mode="before")
-    @classmethod
-    def validate_end_date(cls, v):
-        if v is not None:
-            _validate_date_str(v)
-        return v
-
-
-class RecurringRuleOut(BaseModel):
-    id: str
-    scope: str
-    name: str
-    type: str
-    amount: float
-    category: str
-    frequency: str
-    interval: int
-    day_of_month: int | None = None
-    start_date: str
-    end_date: str | None = None
-    description: str | None = None
-    entity_id: str | None = None
-    payment_method: str | None = None
-    tags: list[str] | None = None
-    meta: dict | None = None
-    next_due: str | None = None       # computed, not stored
-    created_by: str | None = None
-    updated_by: str | None = None
-    created_at: int
-    updated_at: int
-
-    model_config = {"from_attributes": True}
-
-
-class RecurringInstanceOut(BaseModel):
-    """One occurrence of a recurring rule — either projected or materialised."""
-    rule_id: str
-    rule_date: str                    # canonical occurrence date
-    status: str                       # projected | confirmed | skipped
-    # Actual transaction fields (null when projected)
-    transaction_id: str | None = None
-    amount: float
-    type: str
-    category: str
-    date: str                         # actual date (may differ if overridden)
-    description: str | None = None
-    entity_id: str | None = None
-    payment_method: str | None = None
