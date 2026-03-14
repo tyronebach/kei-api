@@ -128,6 +128,11 @@ kei tx add expense 50 supplies --desc "Shampoo order"
 # List transactions
 kei tx list --type income --from 2026-02-01
 
+# Filter by payment method or source
+kei tx list --payment-method cash
+kei tx list --payment-method etransfer --from 2026-01-01
+kei tx list --external-source tributary       # bank-feed transactions only
+
 # List as JSON (for scripting / agent use)
 kei tx list --format json
 kei tx list -f json --type expense
@@ -232,14 +237,27 @@ kei summary
 kei summary --period week
 kei summary --period custom --from 2026-01-01 --to 2026-01-31
 
+# Filter by source (bank = Tributary-pushed, cash = cash-only, agent = manual non-cash)
+kei summary --source bank
+kei summary --source cash
+kei -s salon summary --source bank --period year
+
 # Compare to previous period
 kei summary trends --period month
+kei summary trends --source bank    # bank-verified trend only
 
 # Busiest days
 kei summary by-day
 
 # Cross-scope breakdown
 kei summary by-scope
+
+# Monthly P&L (last 12 months by default)
+kei summary by-month
+kei -s salon summary by-month --from 2025-01-01 --to 2025-12-31
+kei summary by-month --source bank        # bank-verified income/expenses only
+kei summary by-month --source cash        # cash transactions only
+kei summary by-month -f json              # machine-readable
 ```
 
 ---
@@ -311,4 +329,7 @@ Kei CLI wraps the [Kei API](../kei-api/README.md). All commands map to REST endp
 | `list show` | `GET /api/lists/items?list=...` |
 | `list add` | `POST /api/lists/items` |
 | `summary` | `GET /api/summary` |
+| `summary trends` | `GET /api/summary/trends` |
+| `summary by-day` | `GET /api/summary/by-day` |
 | `summary by-scope` | `GET /api/summary/by-scope` |
+| `summary by-month` | `GET /api/summary/by-month` |

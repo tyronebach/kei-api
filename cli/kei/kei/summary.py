@@ -33,6 +33,8 @@ def overview(
     period: str = typer.Option("month", "--period", "-p", help="today, week, month, year, custom"),
     from_date: Optional[str] = typer.Option(None, "--from", help="Start date (for custom period)"),
     to_date: Optional[str] = typer.Option(None, "--to", help="End date (for custom period)"),
+    source: Optional[str] = typer.Option(None, "--source", help="Filter: bank, cash, agent, or all"),
+    payment_method: Optional[str] = typer.Option(None, "--payment-method", help="Filter by payment method"),
 ):
     """Show summary overview (default: this month)."""
     if ctx.invoked_subcommand is not None:
@@ -40,6 +42,10 @@ def overview(
 
     client = get_client(ctx)
     params = build_period_params(period, from_date, to_date)
+    if source:
+        params["source"] = source
+    if payment_method:
+        params["payment_method"] = payment_method
 
     result = client.summary(**params)
     data = result.get("data", result)
@@ -83,10 +89,16 @@ def trends(
     period: str = typer.Option("month", "--period", "-p", help="Compare current vs previous period"),
     from_date: Optional[str] = typer.Option(None, "--from", help="Start date (for custom period)"),
     to_date: Optional[str] = typer.Option(None, "--to", help="End date (for custom period)"),
+    source: Optional[str] = typer.Option(None, "--source", help="Filter: bank, cash, agent, or all"),
+    payment_method: Optional[str] = typer.Option(None, "--payment-method", help="Filter by payment method"),
 ):
     """Compare current period to previous."""
     client = get_client(ctx)
     params = build_period_params(period, from_date, to_date)
+    if source:
+        params["source"] = source
+    if payment_method:
+        params["payment_method"] = payment_method
     result = client.summary_trends(**params)
     data = result.get("data", result)
 
@@ -128,10 +140,16 @@ def by_day(
     period: str = typer.Option("month", "--period", "-p", help="Period to analyze"),
     from_date: Optional[str] = typer.Option(None, "--from", help="Start date (for custom period)"),
     to_date: Optional[str] = typer.Option(None, "--to", help="End date (for custom period)"),
+    source: Optional[str] = typer.Option(None, "--source", help="Filter: bank, cash, agent, or all"),
+    payment_method: Optional[str] = typer.Option(None, "--payment-method", help="Filter by payment method"),
 ):
     """Show income breakdown by day of week."""
     client = get_client(ctx)
     params = build_period_params(period, from_date, to_date)
+    if source:
+        params["source"] = source
+    if payment_method:
+        params["payment_method"] = payment_method
     result = client.summary_by_day(**params)
     data = result.get("data", result)
 
@@ -168,10 +186,16 @@ def by_scope(
     period: str = typer.Option("month", "--period", "-p", help="Period to analyze"),
     from_date: Optional[str] = typer.Option(None, "--from", help="Start date (for custom period)"),
     to_date: Optional[str] = typer.Option(None, "--to", help="End date (for custom period)"),
+    source: Optional[str] = typer.Option(None, "--source", help="Filter: bank, cash, agent, or all"),
+    payment_method: Optional[str] = typer.Option(None, "--payment-method", help="Filter by payment method"),
 ):
     """Show income/expense/profit grouped by scope."""
     client = get_client(ctx)
     params = build_period_params(period, from_date, to_date)
+    if source:
+        params["source"] = source
+    if payment_method:
+        params["payment_method"] = payment_method
     result = client.summary_by_scope(**params)
     data = result.get("data", result)
     scopes = data.get("scopes", [])
@@ -199,6 +223,68 @@ def by_scope(
             f"${income:,.2f}",
             f"${expenses:,.2f}",
             f"${profit:,.2f}",
+        )
+
+    rprint(table)
+
+
+@app.command("by-month")
+def by_month(
+    ctx: typer.Context,
+    from_date: Optional[str] = typer.Option(None, "--from", help="Start date (YYYY-MM-DD), default: 12 months ago"),
+    to_date: Optional[str] = typer.Option(None, "--to", help="End date (YYYY-MM-DD), default: today"),
+    source: Optional[str] = typer.Option(None, "--source", help="Filter: bank, cash, agent, or all"),
+    payment_method: Optional[str] = typer.Option(None, "--payment-method", help="Filter by payment method"),
+    format: str = typer.Option("table", "--format", "-f", help="Output format: table or json"),
+):
+    """Show monthly P&L breakdown."""
+    client = get_client(ctx)
+    params: dict = {}
+    if from_date:
+        params["from"] = from_date
+    if to_date:
+        params["to"] = to_date
+    if source:
+        params["source"] = source
+    if payment_method:
+        params["payment_method"] = payment_method
+
+    result = client.summary_by_month(**params)
+    data = result.get("data", result)
+    months = data.get("months", [])
+    period_info = data.get("period", {})
+
+    if format == "json":
+        import json
+        print(json.dumps(data, indent=2))
+        return
+
+    rprint(f"[bold]Monthly P&L: {period_info.get('from', '')} → {period_info.get('to', '')}[/bold]")
+    if source:
+        rprint(f"[dim]Source: {source}[/dim]")
+    rprint()
+
+    if not months:
+        rprint("[yellow]No data for selected period.[/yellow]")
+        return
+
+    table = Table(show_header=True)
+    table.add_column("Month")
+    table.add_column("Income", justify="right")
+    table.add_column("Expenses", justify="right")
+    table.add_column("Profit", justify="right")
+    table.add_column("Txns", justify="right")
+
+    for m in months:
+        profit = m.get("profit", 0)
+        profit_color = "green" if profit >= 0 else "red"
+        total_txns = m.get("income_count", 0) + m.get("expense_count", 0)
+        table.add_row(
+            m.get("month", ""),
+            f"${m.get('income', 0):,.2f}",
+            f"${m.get('expenses', 0):,.2f}",
+            f"[{profit_color}]${profit:,.2f}[/{profit_color}]",
+            str(total_txns),
         )
 
     rprint(table)

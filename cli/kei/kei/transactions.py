@@ -128,6 +128,8 @@ def list_tx(
     from_date: Optional[str] = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)"),
     to_date: Optional[str] = typer.Option(None, "--to", help="End date (YYYY-MM-DD)"),
     entity: Optional[str] = typer.Option(None, "--entity", "-e", help="Filter by entity ID"),
+    payment_method: Optional[str] = typer.Option(None, "--payment-method", "-p", help="Filter by payment method: cash, etransfer, card, bank, cheque, other"),
+    external_source: Optional[str] = typer.Option(None, "--external-source", help="Filter by external source (e.g. tributary)"),
     limit: int = typer.Option(20, "--limit", "-l", help="Max results"),
     format: str = typer.Option("table", "--format", "-f", help="Output format: table or json"),
 ):
@@ -144,6 +146,10 @@ def list_tx(
         params["to"] = to_date
     if entity:
         params["entity_id"] = entity
+    if payment_method:
+        params["payment_method"] = payment_method
+    if external_source:
+        params["external_source"] = external_source
 
     result = client.tx_list(**params)
     transactions = result.get("data", [])

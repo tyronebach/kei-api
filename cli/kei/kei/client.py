@@ -350,3 +350,9 @@ class KeiClient:
         params = self._add_scope(params)
         r = self._get("/api/summary/by-scope", params=params)
         return self._handle_response(r)
+
+    def summary_by_month(self, **params) -> dict:
+        """Get monthly P&L breakdown."""
+        params = self._add_scope(params)
+        r = self._get("/api/summary/by-month", params=params)
+        return self._handle_response(r)
