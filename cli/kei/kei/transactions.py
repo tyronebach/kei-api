@@ -29,6 +29,11 @@ def add(
     tx_date: Optional[str] = typer.Option(None, "--date", help="Date (YYYY-MM-DD), defaults to today"),
     cash: bool = typer.Option(False, "--cash", help="Cash payment"),
     card: bool = typer.Option(False, "--card", help="Card payment"),
+    payment_method: Optional[str] = typer.Option(
+        None,
+        "--payment-method",
+        help="Payment method: cash, etransfer, card, bank, cheque, other",
+    ),
     tags: Optional[str] = typer.Option(None, "--tags", help="Comma-separated tags"),
     force: bool = typer.Option(False, "--force", help="Bypass duplicate detection and force create"),
 ):
@@ -54,7 +59,13 @@ def add(
             if not entity:
                 raise typer.Exit(1)
         data["entity_id"] = entity
-    if cash:
+    valid_payment_methods = {"cash", "etransfer", "card", "bank", "cheque", "other"}
+    if payment_method:
+        if payment_method not in valid_payment_methods:
+            rprint(f"[red]Invalid payment method '{payment_method}'. Valid: {', '.join(sorted(valid_payment_methods))}[/red]")
+            raise typer.Exit(1)
+        data["payment_method"] = payment_method
+    elif cash:
         data["payment_method"] = "cash"
     elif card:
         data["payment_method"] = "card"

@@ -275,6 +275,8 @@ POST /api/transactions
 
 Required: `scope`, `type` (`income` or `expense`), `amount`, `category`, `date` (YYYY-MM-DD).
 
+`payment_method` must be one of: `cash`, `etransfer`, `card`, `bank`, `cheque`, `other` (or omitted/null).
+
 #### List
 
 ```
@@ -284,6 +286,8 @@ GET /api/transactions?category=haircut,color
 GET /api/transactions?from=2026-02-01&to=2026-02-28
 GET /api/transactions?entity_id=abc123
 GET /api/transactions?sort=amount
+GET /api/transactions?payment_method=cash
+GET /api/transactions?external_source=tributary
 ```
 
 | Param | Description |
@@ -294,6 +298,8 @@ GET /api/transactions?sort=amount
 | `entity_id` | Filter by linked entity |
 | `from` | Start date (inclusive) |
 | `to` | End date (inclusive) |
+| `payment_method` | Filter by payment method (cash, etransfer, card, bank, cheque, other) |
+| `external_source` | Filter by external source (e.g. `tributary`) |
 | `sort` | `date` (default), `created_at`, `amount` |
 | `limit` | Max results (default 50, max 200) |
 | `offset` | Pagination offset |
@@ -539,6 +545,13 @@ DELETE /api/lists?scope=home&list=shopping&checked_only=true   # delete only che
 
 Pre-computed aggregates so agents don't burn tokens doing math. All summary endpoints accept an optional `scope` parameter.
 
+**Common filter params (all summary endpoints):**
+
+| Param | Description |
+|-------|-------------|
+| `payment_method` | Filter by payment method (cash, etransfer, card, bank, cheque, other) |
+| `source` | Filter by origin: `bank` (Tributary imports), `cash` (cash payments), `agent` (manual agent entries), `all` / omit for no filter |
+
 #### Overview
 
 ```
@@ -548,6 +561,8 @@ GET /api/summary?period=week
 GET /api/summary?period=month
 GET /api/summary?period=year
 GET /api/summary?period=custom&from=2026-01-01&to=2026-01-31
+GET /api/summary?source=bank
+GET /api/summary?payment_method=cash
 ```
 
 | Param | Description |
@@ -556,6 +571,8 @@ GET /api/summary?period=custom&from=2026-01-01&to=2026-01-31
 | `period` | `today`, `week`, `month` (default), `year`, `custom` |
 | `from` | Start date (required for `custom`) |
 | `to` | End date (required for `custom`) |
+| `payment_method` | Filter by payment method |
+| `source` | Filter by origin (`bank`, `cash`, `agent`, `all`) |
 
 Response:
 
@@ -636,6 +653,44 @@ GET /api/summary/by-scope?scope=salon&period=custom&from=2026-02-01&to=2026-02-2
 ```
 
 Returns income/expense/profit grouped by scope for the selected period.
+
+#### By Month
+
+```
+GET /api/summary/by-month?scope=salon
+GET /api/summary/by-month?from=2025-01-01&to=2025-12-31
+GET /api/summary/by-month?source=bank
+GET /api/summary/by-month?payment_method=cash
+```
+
+Returns income/expense/profit totals grouped by calendar month. Defaults to the last 12 months if `from`/`to` are omitted. Months with no data are included with 0s.
+
+| Param | Description |
+|-------|-------------|
+| `scope` | Filter by scope |
+| `from` | Start date (defaults to 12 months ago) |
+| `to` | End date (defaults to today) |
+| `payment_method` | Filter by payment method |
+| `source` | Filter by origin (`bank`, `cash`, `agent`, `all`) |
+
+```json
+{
+  "data": {
+    "period": {"from": "2025-03-01", "to": "2026-03-14"},
+    "months": [
+      {
+        "month": "2025-03",
+        "income": 1200.00,
+        "expenses": 400.00,
+        "profit": 800.00,
+        "income_count": 15,
+        "expense_count": 8
+      }
+    ]
+  },
+  "meta": {"count": 13}
+}
+```
 
 ---
 

@@ -340,3 +340,113 @@ def test_transaction_filters(db_session, admin_agent):
         db=db_session,
     )
     assert by_range["meta"]["total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# payment_method enum tests
+# ---------------------------------------------------------------------------
+
+
+def test_payment_method_valid(db_session, admin_agent):
+    """Create transaction with each valid payment_method value — all should succeed."""
+    valid_methods = ["cash", "etransfer", "card", "bank", "cheque", "other"]
+    for i, method in enumerate(valid_methods):
+        result = _create_txn(
+            db_session,
+            admin_agent,
+            payment_method=method,
+            date=f"2026-01-{i + 1:02d}",
+            force_create=True,
+        )
+        assert result.payment_method == method
+
+
+def test_payment_method_invalid(db_session, admin_agent):
+    """Create transaction with invalid payment_method → 422 validation error."""
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        TransactionCreate(
+            scope="salon",
+            type="income",
+            amount=80.0,
+            category="haircut",
+            date="2026-01-01",
+            payment_method="wire",
+        )
+
+
+def test_list_filter_payment_method(db_session, admin_agent):
+    """Filter transactions by payment_method."""
+    _create_txn(db_session, admin_agent, payment_method="cash", date="2026-01-01", force_create=True)
+    _create_txn(db_session, admin_agent, payment_method="bank", date="2026-01-02", force_create=True)
+    _create_txn(db_session, admin_agent, date="2026-01-03", force_create=True)
+
+    cash_result = transactions.list_transactions(
+        scope="salon",
+        type=None,
+        category=None,
+        entity_id=None,
+        from_date=None,
+        to_date=None,
+        payment_method="cash",
+        external_source=None,
+        sort="date",
+        limit=50,
+        offset=0,
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert cash_result["meta"]["total"] == 1
+    assert cash_result["data"][0].payment_method == "cash"
+
+    bank_result = transactions.list_transactions(
+        scope="salon",
+        type=None,
+        category=None,
+        entity_id=None,
+        from_date=None,
+        to_date=None,
+        payment_method="bank",
+        external_source=None,
+        sort="date",
+        limit=50,
+        offset=0,
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert bank_result["meta"]["total"] == 1
+    assert bank_result["data"][0].payment_method == "bank"
+
+
+def test_list_filter_external_source(db_session, admin_agent):
+    """Filter transactions by external_source."""
+    # Tributary transaction
+    _create_txn(
+        db_session,
+        admin_agent,
+        external_source="tributary",
+        external_id="trib-001",
+        date="2026-01-01",
+    )
+    # Normal transaction
+    _create_txn(db_session, admin_agent, date="2026-01-02", force_create=True)
+
+    result = transactions.list_transactions(
+        scope="salon",
+        type=None,
+        category=None,
+        entity_id=None,
+        from_date=None,
+        to_date=None,
+        payment_method=None,
+        external_source="tributary",
+        sort="date",
+        limit=50,
+        offset=0,
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert result["meta"]["total"] == 1
+    assert result["data"][0].external_source == "tributary"

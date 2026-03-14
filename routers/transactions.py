@@ -1,6 +1,8 @@
 import time
 from datetime import date as date_type, timedelta
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
@@ -182,6 +184,8 @@ def list_transactions(
     entity_id: str | None = None,
     from_date: str | None = Query(None, alias="from"),
     to_date: str | None = Query(None, alias="to"),
+    payment_method: Annotated[str | None, Query()] = None,
+    external_source: Annotated[str | None, Query()] = None,
     sort: str = Query("date", pattern="^(date|created_at|amount)$"),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
@@ -200,6 +204,10 @@ def list_transactions(
         q = q.filter(Transaction.date >= from_date)
     if to_date is not None:
         q = q.filter(Transaction.date <= to_date)
+    if payment_method is not None:
+        q = q.filter(Transaction.payment_method == payment_method)
+    if external_source is not None:
+        q = q.filter(Transaction.external_source == external_source)
     total = q.count()
 
     sort_col = {

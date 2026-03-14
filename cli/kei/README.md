@@ -116,6 +116,12 @@ kei entity insights --min-visits 5 --sort total_spend
 # Add income
 kei tx add income 85 haircut --entity <id> --cash
 
+# Add income with explicit payment method
+kei tx add income 85 haircut --payment-method etransfer
+# Valid payment methods: cash, etransfer, card, bank, cheque, other
+# Note: --cash and --card are convenience shortcuts for --payment-method cash/card
+# --payment-method takes precedence over --cash/--card if both are provided
+
 # Add expense
 kei tx add expense 50 supplies --desc "Shampoo order"
 

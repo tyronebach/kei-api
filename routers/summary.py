@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import distinct, func, literal_column
@@ -58,12 +59,40 @@ def _previous_period(start: str, end: str) -> tuple[str, str]:
     return str(prev_start), str(prev_end)
 
 
+def _apply_source_filter(q, source: str | None, payment_method: str | None):
+    """Apply source and payment_method filters to a query.
+
+    source mapping:
+      bank  → external_source == "tributary"
+      cash  → payment_method == "cash"
+      agent → external_source IS NULL AND payment_method != "cash"
+      all / None → no filter
+    """
+    if source == "bank":
+        q = q.filter(Transaction.external_source == "tributary")
+    elif source == "cash":
+        q = q.filter(Transaction.payment_method == "cash")
+    elif source == "agent":
+        q = q.filter(
+            Transaction.external_source.is_(None),
+            Transaction.payment_method != "cash",
+        )
+    # source == "all" or None → no filter
+
+    if payment_method is not None:
+        q = q.filter(Transaction.payment_method == payment_method)
+
+    return q
+
+
 def _period_totals(
     db: Session,
     start: str,
     end: str,
     agent: AgentPrincipal,
     scope: str | None = None,
+    payment_method: str | None = None,
+    source: str | None = None,
 ) -> dict:
     """Compute income/expense totals for a date range.
     Amounts are stored as integer cents; output is dollars (divided by 100).
@@ -78,6 +107,7 @@ def _period_totals(
         Transaction.deleted_at.is_(None),
     )
     q = apply_scope_filter(q, Transaction, scope, agent)
+    q = _apply_source_filter(q, source, payment_method)
     rows = q.group_by(Transaction.type).all()
     income = {"total": 0.0, "count": 0}
     expenses = {"total": 0.0, "count": 0}
@@ -96,11 +126,13 @@ def get_summary(
     period: str = Query("month"),
     from_date: str | None = Query(None, alias="from"),
     to_date: str | None = Query(None, alias="to"),
+    payment_method: Annotated[str | None, Query()] = None,
+    source: Annotated[str | None, Query()] = None,
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
     start, end = _resolve_period(period, from_date, to_date)
-    totals = _period_totals(db, start, end, agent, scope)
+    totals = _period_totals(db, start, end, agent, scope, payment_method, source)
     income = totals["income"]
     expenses = totals["expenses"]
 
@@ -116,6 +148,7 @@ def get_summary(
         Transaction.deleted_at.is_(None),
     )
     top_income_q = apply_scope_filter(top_income_q, Transaction, scope, agent)
+    top_income_q = _apply_source_filter(top_income_q, source, payment_method)
     top_income = (
         top_income_q.group_by(Transaction.category)
         .order_by(func.sum(Transaction.amount).desc())
@@ -135,6 +168,7 @@ def get_summary(
         Transaction.deleted_at.is_(None),
     )
     top_expense_q = apply_scope_filter(top_expense_q, Transaction, scope, agent)
+    top_expense_q = _apply_source_filter(top_expense_q, source, payment_method)
     top_expense = (
         top_expense_q.group_by(Transaction.category)
         .order_by(func.sum(Transaction.amount).desc())
@@ -205,14 +239,16 @@ def get_trends(
     period: str = Query("month"),
     from_date: str | None = Query(None, alias="from"),
     to_date: str | None = Query(None, alias="to"),
+    payment_method: Annotated[str | None, Query()] = None,
+    source: Annotated[str | None, Query()] = None,
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
     start, end = _resolve_period(period, from_date, to_date)
     prev_start, prev_end = _previous_period(start, end)
 
-    current = _period_totals(db, start, end, agent, scope)
-    previous = _period_totals(db, prev_start, prev_end, agent, scope)
+    current = _period_totals(db, start, end, agent, scope, payment_method, source)
+    previous = _period_totals(db, prev_start, prev_end, agent, scope, payment_method, source)
 
     cur_profit = current["income"]["total"] - current["expenses"]["total"]
     prev_profit = previous["income"]["total"] - previous["expenses"]["total"]
@@ -266,6 +302,8 @@ def get_summary_by_scope(
     period: str = Query("month"),
     from_date: str | None = Query(None, alias="from"),
     to_date: str | None = Query(None, alias="to"),
+    payment_method: Annotated[str | None, Query()] = None,
+    source: Annotated[str | None, Query()] = None,
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
@@ -282,6 +320,7 @@ def get_summary_by_scope(
         Transaction.deleted_at.is_(None),
     )
     q = apply_scope_filter(q, Transaction, scope, agent)
+    q = _apply_source_filter(q, source, payment_method)
     rows = q.group_by(Transaction.scope, Transaction.type).all()
 
     per_scope: dict[str, dict] = {}
@@ -317,6 +356,8 @@ def get_by_day(
     period: str = Query("month"),
     from_date: str | None = Query(None, alias="from"),
     to_date: str | None = Query(None, alias="to"),
+    payment_method: Annotated[str | None, Query()] = None,
+    source: Annotated[str | None, Query()] = None,
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
@@ -336,6 +377,7 @@ def get_by_day(
         Transaction.deleted_at.is_(None),
     )
     q = apply_scope_filter(q, Transaction, scope, agent)
+    q = _apply_source_filter(q, source, payment_method)
     rows = q.group_by(literal_column("1")).all()
 
     # Build full week (all 7 days), SQLite dow: 0=Sun,1=Mon..6=Sat
@@ -359,4 +401,105 @@ def get_by_day(
             "days": days,
             "busiest": busiest["day"],
         }
+    }
+
+
+@router.get("/by-month")
+def get_by_month(
+    scope: str | None = None,
+    from_date: str | None = Query(None, alias="from"),
+    to_date: str | None = Query(None, alias="to"),
+    payment_method: Annotated[str | None, Query()] = None,
+    source: Annotated[str | None, Query()] = None,
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    """Return income/expense totals grouped by month.
+
+    Defaults to the last 12 months if from/to not provided.
+    Fills months with no data as 0s.
+    """
+    today = date.today()
+    if from_date is None:
+        # Last 12 months: start of month 11 months ago
+        start_month = today.replace(day=1) - timedelta(days=today.replace(day=1).toordinal() - 1)
+        # Simpler: subtract ~365 days and go to start of that month
+        start_d = (today - timedelta(days=365)).replace(day=1)
+        start = start_d.isoformat()
+    else:
+        start = parse_date(from_date, "from").isoformat()
+
+    if to_date is None:
+        end = today.isoformat()
+    else:
+        end = parse_date(to_date, "to").isoformat()
+
+    # Query grouped by YYYY-MM
+    q = db.query(
+        literal_column("strftime('%Y-%m', transactions.date)").label("month"),
+        Transaction.type,
+        func.sum(Transaction.amount).label("total_cents"),
+        func.count().label("count"),
+    ).filter(
+        Transaction.date >= start,
+        Transaction.date <= end,
+        Transaction.deleted_at.is_(None),
+    )
+    q = apply_scope_filter(q, Transaction, scope, agent)
+    q = _apply_source_filter(q, source, payment_method)
+    rows = q.group_by(
+        literal_column("strftime('%Y-%m', transactions.date)"),
+        Transaction.type,
+    ).all()
+
+    # Build month range
+    start_d = date.fromisoformat(start)
+    end_d = date.fromisoformat(end)
+    # Generate all YYYY-MM strings in range
+    months_in_range: list[str] = []
+    cur = start_d.replace(day=1)
+    while cur <= end_d:
+        months_in_range.append(cur.strftime("%Y-%m"))
+        # Advance to next month
+        if cur.month == 12:
+            cur = cur.replace(year=cur.year + 1, month=1)
+        else:
+            cur = cur.replace(month=cur.month + 1)
+
+    # Build data map
+    month_data: dict[str, dict] = {
+        m: {
+            "month": m,
+            "income": 0.0,
+            "expenses": 0.0,
+            "profit": 0.0,
+            "income_count": 0,
+            "expense_count": 0,
+        }
+        for m in months_in_range
+    }
+
+    for row in rows:
+        m = row.month
+        if m not in month_data:
+            continue
+        if row.type == "income":
+            month_data[m]["income"] = round((row.total_cents or 0) / 100, 2)
+            month_data[m]["income_count"] = row.count
+        elif row.type == "expense":
+            month_data[m]["expenses"] = round((row.total_cents or 0) / 100, 2)
+            month_data[m]["expense_count"] = row.count
+
+    # Compute profit
+    for m in month_data.values():
+        m["profit"] = round(m["income"] - m["expenses"], 2)
+
+    months_list = [month_data[m] for m in months_in_range]
+
+    return {
+        "data": {
+            "period": {"from": start, "to": end},
+            "months": months_list,
+        },
+        "meta": {"count": len(months_list)},
     }

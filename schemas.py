@@ -107,7 +107,7 @@ class TransactionCreate(StrictInput):
     external_source: str | None = None
     external_id: str | None = None
     tags: list[str] | None = None
-    payment_method: str | None = None
+    payment_method: Literal["cash", "etransfer", "card", "bank", "cheque", "other"] | None = None
     manually_enriched: bool = False
     meta: dict | None = None
     force_create: bool = False  # if True, skip fuzzy duplicate check
@@ -133,7 +133,7 @@ class TransactionUpdate(StrictInput):
     date: str | None = None
     entity_id: str | None = None
     tags: list[str] | None = None
-    payment_method: str | None = None
+    payment_method: Literal["cash", "etransfer", "card", "bank", "cheque", "other"] | None = None
     manually_enriched: bool | None = None
     meta: dict | None = None
 
@@ -157,7 +157,7 @@ class TransactionOut(BaseModel):
     external_source: str | None = None
     external_id: str | None = None
     tags: list[str] | None = None
-    payment_method: str | None = None
+    payment_method: Literal["cash", "etransfer", "card", "bank", "cheque", "other"] | None = None
     manually_enriched: bool = False
     meta: dict | None = None
     created_by: str | None = None
