@@ -57,7 +57,7 @@ python -m kei.cli health
 - Default stance: delete old-state compatibility code instead of carrying it forward.
 
 ## Resource Types
-`entities`, `items`, `lists`, `transactions`, `services`, `recurring`, `summary`
+`entities`, `items`, `lists`, `transactions`, `services`, `summary`
 All share: `id`, `scope`, `meta` (JSON), standard timestamps.
 
 ## High-Risk Areas

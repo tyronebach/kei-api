@@ -324,68 +324,6 @@ class KeiClient:
         r = self._delete(f"/api/services/{service_id}")
         return self._handle_response(r)
 
-    # === Recurring Rules ===
-
-    def recurring_create(self, **data) -> dict:
-        data = self._add_scope_body(data)
-        self._require_scope(data.get("scope"), "Creating recurring rules")
-        r = self._post("/api/recurring", json=data)
-        return self._handle_response(r)
-
-    def recurring_list(self, **params) -> dict:
-        params = self._add_scope(params)
-        r = self._get("/api/recurring", params=params)
-        return self._handle_response(r)
-
-    def recurring_get(self, rule_id: str) -> dict:
-        rule_id = self._resolve_prefix(rule_id, "/api/recurring")
-        r = self._get(f"/api/recurring/{rule_id}")
-        return self._handle_response(r)
-
-    def recurring_update(self, rule_id: str, effective_from: Optional[str] = None, **data) -> dict:
-        rule_id = self._resolve_prefix(rule_id, "/api/recurring")
-        params = {"effective_from": effective_from} if effective_from else {}
-        r = self._request("PATCH", f"/api/recurring/{rule_id}", json=data, params=params)
-        return self._handle_response(r)
-
-    def recurring_stop(self, rule_id: str, end_date: Optional[str] = None) -> dict:
-        rule_id = self._resolve_prefix(rule_id, "/api/recurring")
-        params = {"end_date": end_date} if end_date else {}
-        r = self._post(f"/api/recurring/{rule_id}/stop", params=params)
-        return self._handle_response(r)
-
-    def recurring_skip(self, rule_id: str, skip_date: str) -> dict:
-        rule_id = self._resolve_prefix(rule_id, "/api/recurring")
-        r = self._post(f"/api/recurring/{rule_id}/skip", params={"skip_date": skip_date})
-        return self._handle_response(r)
-
-    def recurring_unskip(self, rule_id: str, skip_date: str) -> dict:
-        rule_id = self._resolve_prefix(rule_id, "/api/recurring")
-        r = self._delete(f"/api/recurring/{rule_id}/skip/{skip_date}")
-        return self._handle_response(r)
-
-    def recurring_instances(self, rule_id: str, from_date: str, to_date: str) -> dict:
-        rule_id = self._resolve_prefix(rule_id, "/api/recurring")
-        r = self._get(f"/api/recurring/{rule_id}/instances",
-                      params={"from": from_date, "to": to_date})
-        return self._handle_response(r)
-
-    def recurring_generate(self, rule_id: str, through: str) -> dict:
-        rule_id = self._resolve_prefix(rule_id, "/api/recurring")
-        r = self._post(f"/api/recurring/{rule_id}/generate", params={"through": through})
-        return self._handle_response(r)
-
-    def recurring_delete(self, rule_id: str) -> dict:
-        rule_id = self._resolve_prefix(rule_id, "/api/recurring")
-        r = self._delete(f"/api/recurring/{rule_id}")
-        return self._handle_response(r)
-
-    def recurring_settle(self, scope: Optional[str] = None) -> dict:
-        params = self._add_scope({})
-        if scope:
-            params["scope"] = scope
-        r = self._post("/api/recurring/settle", params=params)
-        return self._handle_response(r)
 
     # === Summary ===
 
