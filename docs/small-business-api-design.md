@@ -123,6 +123,20 @@ Requests are authenticated into an `AgentPrincipal`:
 - `PUT /api/transactions/{transaction_id}`
 - `DELETE /api/transactions/{transaction_id}` (soft delete)
 
+#### Fuzzy duplicate detection (`POST /api/transactions`)
+
+Manual writes (no `external_source`) run fuzzy dedup against transactions within a ±3-day window using amount (40%), description (40%), and date proximity (20%) weights.
+
+**Response shapes:**
+
+| Condition | `matched` | `created` | `probable_match` | `data` |
+|-----------|-----------|-----------|------------------|--------|
+| Score ≥ 85 (duplicate) | `true` | — | — | existing tx |
+| Score 70–84 (probable) | — | `true` | existing tx | — |
+| Score < 70 (new) | — | `true` | — | new tx |
+
+**`force_create` field:** Set `force_create: true` in the request body to bypass dedup entirely and always insert a new row. Also bypassed for Tributary writes (`external_source` set).
+
 ### Items
 
 - `POST /api/items`

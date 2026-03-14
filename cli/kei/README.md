@@ -122,12 +122,38 @@ kei tx add expense 50 supplies --desc "Shampoo order"
 # List transactions
 kei tx list --type income --from 2026-02-01
 
+# List as JSON (for scripting / agent use)
+kei tx list --format json
+kei tx list -f json --type expense
+
 # Fix a mistake
 kei tx update <id> --amount 58
 
-# Delete
+# Delete (interactive confirmation)
 kei tx delete <id>
+
+# Delete without prompt (scripting)
+kei tx delete <id> -y
+kei tx delete <id> --yes
+kei tx delete <id> --force
 ```
+
+#### Duplicate detection
+
+The API runs fuzzy dedup on manual writes (amount + description + date proximity).
+
+- **Exact or near-exact duplicate (score ≥ 85):** transaction is **not** recorded. The CLI prints:
+  ```
+  ⚠ Skipped: duplicate transaction detected (ID: 3c1a6a27, date: 2026-03-14, amount: $80.00, category: haircut). Use --force to override.
+  ```
+- **Probable match (score 70–84):** transaction **is** recorded, but CLI warns:
+  ```
+  ⚠ Note: possible duplicate (ID: 3c1a6a27, score: 78/100). Transaction was recorded.
+  ```
+- **Force bypass:** pass `--force` to skip dedup entirely and always create a new record:
+  ```bash
+  kei tx add income 85 haircut --entity <id> --force
+  ```
 
 ### Items (inventory)
 
