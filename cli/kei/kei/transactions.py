@@ -1,5 +1,6 @@
 """Transaction commands."""
 
+import json
 from datetime import date
 from typing import Optional
 
@@ -29,6 +30,7 @@ def add(
     cash: bool = typer.Option(False, "--cash", help="Cash payment"),
     card: bool = typer.Option(False, "--card", help="Card payment"),
     tags: Optional[str] = typer.Option(None, "--tags", help="Comma-separated tags"),
+    force: bool = typer.Option(False, "--force", help="Bypass duplicate detection and force create"),
 ):
     """Add a transaction."""
     if type not in ("income", "expense"):
@@ -36,11 +38,12 @@ def add(
         raise typer.Exit(1)
 
     client = get_client(ctx)
+    resolved_date = tx_date or date.today().isoformat()
     data = {
         "type": type,
         "amount": amount,
         "category": category,
-        "date": tx_date or date.today().isoformat(),
+        "date": resolved_date,
     }
     if description:
         data["description"] = description
@@ -57,10 +60,53 @@ def add(
         data["payment_method"] = "card"
     if tags:
         data["tags"] = [t.strip() for t in tags.split(",")]
+    if force:
+        data["force_create"] = True
 
     result = client.tx_create(**data)
+
+    # Duplicate detected — skipped, not recorded
+    if result.get("matched"):
+        dup = result.get("data", {})
+        dup_id = (dup.get("id") or "")[:8]
+        dup_date = dup.get("date", "")
+        dup_amount = dup.get("amount", 0)
+        dup_cat = dup.get("category", "")
+        rprint(
+            f"[yellow]⚠ Skipped: duplicate transaction detected "
+            f"(ID: {dup_id}, date: {dup_date}, amount: ${dup_amount:.2f}, category: {dup_cat}). "
+            f"Use --force to override.[/yellow]"
+        )
+        return
+
+    # Recorded, but a probable duplicate exists
+    if result.get("probable_match"):
+        pm = result.get("probable_match", {})
+        pm_id = (pm.get("id") or "")[:8]
+        pm_score = result.get("match_score", 0)
+        rprint(
+            f"[yellow]⚠ Note: possible duplicate "
+            f"(ID: {pm_id}, score: {pm_score}/100). Transaction was recorded.[/yellow]"
+        )
+        # Fall through to success message (transaction was created, but data key is absent here)
+        # Build a synthetic display from the input values
+        entity_suffix = f", entity: {entity[:8]}" if entity else ""
+        rprint(
+            f"[green]✓ Recorded {type}:[/green] "
+            f"${amount:.2f} for {category} (date: {resolved_date}{entity_suffix})"
+        )
+        return
+
+    # Normal success
     tx = result.get("data", result)
-    rprint(f"[green]Recorded {type}:[/green] ${amount:.2f} for {category} (ID: {tx.get('id', '')[:8]})")
+    tx_id = (tx.get("id") or "")[:8]
+    tx_display_date = tx.get("date", resolved_date)
+    entity_suffix = f", entity: {entity[:8]}" if entity else ""
+    rprint(
+        f"[green]✓ Recorded {type}:[/green] "
+        f"${amount:.2f} for {category} "
+        f"(ID: {tx_id}, date: {tx_display_date}{entity_suffix})"
+    )
 
 
 @app.command("list")
@@ -72,6 +118,7 @@ def list_tx(
     to_date: Optional[str] = typer.Option(None, "--to", help="End date (YYYY-MM-DD)"),
     entity: Optional[str] = typer.Option(None, "--entity", "-e", help="Filter by entity ID"),
     limit: int = typer.Option(20, "--limit", "-l", help="Max results"),
+    format: str = typer.Option("table", "--format", "-f", help="Output format: table or json"),
 ):
     """List transactions."""
     client = get_client(ctx)
@@ -92,6 +139,10 @@ def list_tx(
 
     if not transactions:
         rprint("[yellow]No transactions found.[/yellow]")
+        return
+
+    if format == "json":
+        print(json.dumps(transactions, indent=2))
         return
 
     table = Table(show_header=True)
@@ -178,9 +229,10 @@ def delete(
     ctx: typer.Context,
     tx_id: str = typer.Argument(..., help="Transaction ID"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ):
     """Delete a transaction."""
-    if not force:
+    if not (force or yes):
         confirm = typer.confirm(f"Delete transaction {tx_id}?")
         if not confirm:
             raise typer.Abort()
