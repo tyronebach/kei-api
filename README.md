@@ -277,24 +277,52 @@ Required: `scope`, `type` (`income` or `expense`), `amount`, `category`, `date` 
 
 `payment_method` must be one of: `cash`, `etransfer`, `card`, `bank`, `cheque`, `other` (or omitted/null).
 
-#### Duplicate Detection (POST /api/transactions)
+#### Duplicate Detection & Reconciliation (POST /api/transactions)
 
-The create endpoint runs fuzzy dedup before writing. Scoring uses amount, date proximity, and description similarity.
+The create endpoint runs fuzzy dedup before writing. Two separate scoring models exist depending on the caller — this is intentional defense-in-depth, not a bug.
 
-**Rem/manual path** (no `external_source`):
-- Score ≥ 92: hard block — returns `{"matched": true, "data": <existing>}`, nothing written
-- Score 60–91: warn band — written, returns `{"probable_match": <candidate>, "match_score": N}`
-- Score < 60: clean create
+##### Kei server-side scoring
 
-**Tributary path** (`external_source: "tributary"`): searches for `manually_enriched=true` rows with no `external_source`, exact amount + scope, ±1 day:
-- Score ≥ 85: claim existing Rem row (attach `external_source`/`external_id`) — returns `{"reconciled": true, "data": <row>}`, no new row created
-- Score 60–84: written with warn
+**Rem/manual path** — `_fuzzy_score` (no `external_source`):
+- **Weights:** 40% amount, 40% description (token-sort ratio via rapidfuzz), 20% date proximity
+- Amount gate: exact match = 100, within 5% = 80, else 0 (early return)
+- Date proximity: same day = 100, ±1 day = 80, ±2 = 60, ±3 = 40, beyond = 0
+- Description: both null = 50 (suspicious), one null = 0 (no signal), otherwise fuzzy ratio
+- **Thresholds:**
+  - ≥ 92: hard block — returns `{"matched": true, "data": <existing>}`, nothing written. If the match is a Tributary row, enriches it instead (adds `description`, `entity_id`, sets `manually_enriched=true`) — returns `{"enriched": true, "data": <row>}`
+  - 60–91: warn band — row is created, response includes `{"data": ..., "probable_match": <candidate>, "match_score": N}`
+  - < 60: clean create
 
-**Rem enriching a Tributary row**: if Rem's POST finds a high-scoring Tributary row, it enriches it (adds `description`, `entity_id`, sets `manually_enriched=true`) instead of creating a duplicate — returns `{"enriched": true, "data": <row>}`.
+**Tributary path** — `_fuzzy_score_amount_date_only` (`external_source: "tributary"`):
+- **Weights:** 67% amount, 33% date — description intentionally excluded (Rem's human notes won't match Plaid bank strings)
+- Amount gate: exact = 100, within 5% = 80, else 0
+- Date proximity: same day = 100, ±1 = 75, ±2 = 50, ±3 = 25, beyond = 0
+- Only searches `manually_enriched=true` rows with no `external_source` (unclaimed Rem rows)
+- **Thresholds:**
+  - ≥ 85: reconcile — claims the existing Rem row (attaches `external_source`/`external_id`) — returns `{"reconciled": true, "data": <row>}`, no new row created
+  - 60–84: warn band — row is created, response includes `probable_match` and `match_score`
+  - < 60: clean create
 
-**`manually_enriched` flag**: set automatically when a human (Rem) has touched `entity_id` or `description`. Protects those fields from being clobbered by Tributary re-syncs. Also set via PATCH when those fields are updated.
+##### Tributary client-side scoring (pre-filter before POST)
 
-Pass `force_create: true` to bypass dedup entirely.
+Tributary runs its own `scoreFuzzyMatch` before deciding to POST:
+- **Amount:** pass/fail gate — must be exact match (no partial credit)
+- **Date:** 0–40 pts, linear decay over 3 days (same day = 40, 3 days = 0)
+- **Description:** 0–60 pts Jaccard similarity between word sets, OR 45 pts flat if `manually_enriched=true` (human notes ≠ bank strings, so penalize less but don't skip)
+- **Thresholds:** ≥ 85 to claim via PATCH, otherwise creates new
+
+##### Why two scoring models?
+
+The divergence is intentional defense-in-depth:
+1. **Tributary pre-filters** client-side with description-aware scoring to avoid unnecessary POSTs
+2. **Kei double-checks** server-side with an amount+date-only model (for Tributary) because Plaid bank strings rarely match Rem's human descriptions
+3. Both must agree before a reconciliation happens — reduces false positive claims
+
+##### `manually_enriched` flag
+
+Set automatically when a human (Rem) creates or PATCHes a row with `description` or `entity_id`. On PATCH, auto-inference only fires when `manually_enriched` is **not** explicitly in the request body — if Tributary passes `manually_enriched: false`, that's respected. This protects human-enriched fields from being clobbered by Tributary re-syncs.
+
+Pass `force_create: true` to bypass all dedup/reconcile logic.
 
 #### List
 
