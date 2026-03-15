@@ -42,8 +42,12 @@ def _fuzzy_score(
     else:
         return 0
 
-    # Description score — 0 when either side is null
-    if new_description is None or candidate.description is None:
+    # Description score
+    # Both null = ambiguous (e.g. two e-transfers same amount same day) — treat as suspicious
+    # One null = no signal, score 0
+    if new_description is None and candidate.description is None:
+        desc_score = 50
+    elif new_description is None or candidate.description is None:
         desc_score = 0
     else:
         desc_score = fuzz.token_sort_ratio(new_description, candidate.description)
@@ -148,10 +152,10 @@ def create_transaction(
     probable_score: int = 0
     if not body.external_source and not body.force_create:
         match, score = _find_fuzzy_duplicate(body, amount_cents, db)
-        if match is not None and score >= 85:
+        if match is not None and score >= 92:
             # High-confidence duplicate — do not insert
             return {"matched": True, "data": TransactionOut.from_orm_cents(match)}
-        if match is not None and score >= 70:
+        if match is not None and score >= 60:
             # Probable match — capture before insert, surface to caller after
             probable_match = match
             probable_score = score
