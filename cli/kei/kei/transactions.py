@@ -76,6 +76,24 @@ def add(
 
     result = client.tx_create(**data)
 
+    # Tributary reconcile: Tributary claimed an existing Rem row (no duplicate)
+    if result.get("reconciled"):
+        tx = result.get("data", {})
+        rprint(
+            f"[cyan]↔ Reconciled:[/cyan] matched existing row {(tx.get('id') or '')[:8]} "
+            f"(entity: {tx.get('entity_id', 'none')[:8] if tx.get('entity_id') else 'none'})"
+        )
+        return
+
+    # Rem enriched a Tributary row (no duplicate)
+    if result.get("enriched"):
+        tx = result.get("data", {})
+        rprint(
+            f"[cyan]↔ Enriched:[/cyan] updated Tributary row {(tx.get('id') or '')[:8]} "
+            f"with your description/entity"
+        )
+        return
+
     # Duplicate detected — skipped, not recorded
     if result.get("matched"):
         dup = result.get("data", {})
@@ -219,9 +237,10 @@ def update(
     amount: Optional[float] = typer.Option(None, "--amount", "-a", help="New amount"),
     category: Optional[str] = typer.Option(None, "--category", "-c", help="New category"),
     description: Optional[str] = typer.Option(None, "--desc", "-d", help="New description"),
+    entity: Optional[str] = typer.Option(None, "--entity", "-e", help="Link to entity (ID or name prefix)"),
     tx_date: Optional[str] = typer.Option(None, "--date", help="New date"),
 ):
-    """Update a transaction."""
+    """Update a transaction (full update — replaces all provided fields)."""
     client = get_client(ctx)
     data = {}
     if amount is not None:
@@ -232,6 +251,13 @@ def update(
         data["description"] = description
     if tx_date:
         data["date"] = tx_date
+    if entity:
+        if len(entity) < 32:
+            all_entities = client.entity_list(limit=200).get("data", [])
+            entity = resolve_id(all_entities, entity)
+            if not entity:
+                raise typer.Exit(1)
+        data["entity_id"] = entity
 
     if not data:
         rprint("[red]No fields to update.[/red]")
@@ -239,6 +265,37 @@ def update(
 
     client.tx_update(tx_id, **data)
     rprint(f"[green]Updated transaction {tx_id[:8]}[/green]")
+
+
+@app.command("link")
+def link(
+    ctx: typer.Context,
+    tx_id: str = typer.Argument(..., help="Transaction ID (or 8-char prefix)"),
+    entity: str = typer.Argument(..., help="Entity ID or name prefix to link"),
+):
+    """Link a transaction to an entity (client, vendor, etc.).
+
+    Uses PATCH — only entity_id is touched; all other fields preserved.
+    Also sets manually_enriched=True automatically (server-side).
+
+    Example:
+        kei tx link abc12345 gina
+        kei tx link abc12345 ent_fullid123...
+    """
+    client = get_client(ctx)
+
+    # Resolve entity name prefix → full ID if needed
+    if len(entity) < 32:
+        all_entities = client.entity_list(limit=200).get("data", [])
+        entity = resolve_id(all_entities, entity)
+        if not entity:
+            raise typer.Exit(1)
+
+    result = client.tx_patch(tx_id, entity_id=entity)
+    tx = result.get("data", result)
+    tx_id_short = (tx.get("id") or tx_id)[:8]
+    entity_id_short = entity[:8]
+    rprint(f"[green]✓ Linked transaction {tx_id_short} → entity {entity_id_short}[/green]")
 
 
 @app.command("delete")

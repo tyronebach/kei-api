@@ -75,6 +75,9 @@ class KeiClient:
     def _put(self, path: str, **kwargs) -> httpx.Response:
         return self._request("PUT", path, **kwargs)
 
+    def _patch(self, path: str, **kwargs) -> httpx.Response:
+        return self._request("PATCH", path, **kwargs)
+
     def _delete(self, path: str, **kwargs) -> httpx.Response:
         return self._request("DELETE", path, **kwargs)
 
@@ -192,6 +195,12 @@ class KeiClient:
         """Update a transaction."""
         tx_id = self._resolve_prefix(tx_id, "/api/transactions")
         r = self._put(f"/api/transactions/{tx_id}", json=data)
+        return self._handle_response(r)
+
+    def tx_patch(self, tx_id: str, **data) -> dict:
+        """Partial-update a transaction (only set fields touched)."""
+        tx_id = self._resolve_prefix(tx_id, "/api/transactions")
+        r = self._patch(f"/api/transactions/{tx_id}", json=data)
         return self._handle_response(r)
 
     def tx_delete(self, tx_id: str) -> dict:
