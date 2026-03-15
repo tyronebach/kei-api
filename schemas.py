@@ -136,6 +136,9 @@ class TransactionUpdate(StrictInput):
     payment_method: Literal["cash", "etransfer", "card", "bank", "cheque", "other"] | None = None
     manually_enriched: bool | None = None
     meta: dict | None = None
+    # Allow linking an existing row to an external source (e.g. Tributary claiming a Rem entry)
+    external_source: str | None = None
+    external_id: str | None = None
 
     @field_validator("date")
     @classmethod
