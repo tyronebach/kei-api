@@ -277,6 +277,25 @@ Required: `scope`, `type` (`income` or `expense`), `amount`, `category`, `date` 
 
 `payment_method` must be one of: `cash`, `etransfer`, `card`, `bank`, `cheque`, `other` (or omitted/null).
 
+#### Duplicate Detection (POST /api/transactions)
+
+The create endpoint runs fuzzy dedup before writing. Scoring uses amount, date proximity, and description similarity.
+
+**Rem/manual path** (no `external_source`):
+- Score ≥ 92: hard block — returns `{"matched": true, "data": <existing>}`, nothing written
+- Score 60–91: warn band — written, returns `{"probable_match": <candidate>, "match_score": N}`
+- Score < 60: clean create
+
+**Tributary path** (`external_source: "tributary"`): searches for `manually_enriched=true` rows with no `external_source`, exact amount + scope, ±1 day:
+- Score ≥ 85: claim existing Rem row (attach `external_source`/`external_id`) — returns `{"reconciled": true, "data": <row>}`, no new row created
+- Score 60–84: written with warn
+
+**Rem enriching a Tributary row**: if Rem's POST finds a high-scoring Tributary row, it enriches it (adds `description`, `entity_id`, sets `manually_enriched=true`) instead of creating a duplicate — returns `{"enriched": true, "data": <row>}`.
+
+**`manually_enriched` flag**: set automatically when a human (Rem) has touched `entity_id` or `description`. Protects those fields from being clobbered by Tributary re-syncs. Also set via PATCH when those fields are updated.
+
+Pass `force_create: true` to bypass dedup entirely.
+
 #### List
 
 ```
@@ -303,6 +322,20 @@ GET /api/transactions?external_source=tributary
 | `sort` | `date` (default), `created_at`, `amount` |
 | `limit` | Max results (default 50, max 200) |
 | `offset` | Pagination offset |
+
+#### Partial Update (PATCH)
+
+```
+PATCH /api/transactions/{id}
+```
+
+Only the fields you send are updated — everything else is preserved. Use this for targeted operations like linking an entity without clobbering other fields.
+
+```json
+{"entity_id": "abc123"}
+```
+
+Setting `entity_id` or `description` via PATCH automatically sets `manually_enriched: true` (server-side). This signals to the Tributary reconcile logic that a human has enriched this row.
 
 #### Get / Update / Delete
 

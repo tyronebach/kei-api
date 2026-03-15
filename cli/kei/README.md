@@ -137,8 +137,15 @@ kei tx list --external-source tributary       # bank-feed transactions only
 kei tx list --format json
 kei tx list -f json --type expense
 
-# Fix a mistake
+# Fix a mistake (full update — send all fields to change)
 kei tx update <id> --amount 58
+kei tx update <id> --category dining --desc "corrected vendor"
+kei tx update <id> --entity <entity-id>    # link an entity
+kei tx update <id> --entity "kevin"        # name prefix resolves automatically
+
+# Link an entity (partial update — only entity_id touched)
+kei tx link <id> "michelle"               # name prefix resolves automatically
+kei tx link <id> <full-entity-id>
 
 # Delete (interactive confirmation)
 kei tx delete <id>
@@ -153,18 +160,33 @@ kei tx delete <id> --force
 
 The API runs fuzzy dedup on manual writes (amount + description + date proximity).
 
-- **Exact or near-exact duplicate (score ≥ 85):** transaction is **not** recorded. The CLI prints:
+- **Hard block (score ≥ 92):** transaction is **not** recorded:
   ```
   ⚠ Skipped: duplicate transaction detected (ID: 3c1a6a27, date: 2026-03-14, amount: $80.00, category: haircut). Use --force to override.
   ```
-- **Probable match (score 70–84):** transaction **is** recorded, but CLI warns:
+- **Warn band (score 60–91):** transaction **is** recorded, but CLI warns:
   ```
   ⚠ Note: possible duplicate (ID: 3c1a6a27, score: 78/100). Transaction was recorded.
+  ```
+- **Reconciled (Tributary path):** if Tributary already synced this transaction, your entry attaches to the existing row instead of creating a duplicate:
+  ```
+  ↔ Reconciled: matched existing row 3c1a6a27 (entity: none)
+  ```
+- **Enriched (Rem path):** if Rem adds description/entity to a Tributary row:
+  ```
+  ↔ Enriched: updated Tributary row 3c1a6a27 with your description/entity
   ```
 - **Force bypass:** pass `--force` to skip dedup entirely and always create a new record:
   ```bash
   kei tx add income 85 haircut --entity <id> --force
   ```
+
+#### `tx link` vs `tx update --entity`
+
+| Command | Use when |
+|---------|----------|
+| `kei tx link <id> <entity>` | Only linking an entity — nothing else changes. Uses PATCH, minimal footprint. |
+| `kei tx update <id> --entity <e> --amount 90` | Changing multiple fields at once. Uses PUT. |
 
 ### Items (inventory)
 
@@ -325,6 +347,10 @@ Kei CLI wraps the [Kei API](../kei-api/README.md). All commands map to REST endp
 | `entity activity` | `GET /api/entities/{id}/activity` |
 | `tx add` | `POST /api/transactions` |
 | `tx list` | `GET /api/transactions` |
+| `tx get` | `GET /api/transactions/{id}` |
+| `tx update` | `PUT /api/transactions/{id}` |
+| `tx link` | `PATCH /api/transactions/{id}` |
+| `tx delete` | `DELETE /api/transactions/{id}` |
 | `item low-stock` | `GET /api/items/low-stock` |
 | `list show` | `GET /api/lists/items?list=...` |
 | `list add` | `POST /api/lists/items` |
