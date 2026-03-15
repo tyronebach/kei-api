@@ -27,6 +27,12 @@ def upgrade() -> None:
         conn.execute(sa.text(
             "ALTER TABLE transactions ADD COLUMN manually_enriched INTEGER NOT NULL DEFAULT 0"
         ))
+    # Backfill: mark existing human-enriched rows (non-external with description or entity)
+    conn.execute(sa.text(
+        "UPDATE transactions SET manually_enriched = 1 "
+        "WHERE deleted_at IS NULL AND external_source IS NULL "
+        "AND (description IS NOT NULL OR entity_id IS NOT NULL)"
+    ))
 
 
 def downgrade() -> None:

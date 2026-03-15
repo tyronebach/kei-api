@@ -453,3 +453,76 @@ def test_list_filter_external_source(db_session, admin_agent):
     )
     assert result["meta"]["total"] == 1
     assert result["data"][0].external_source == "tributary"
+
+
+# ---------------------------------------------------------------------------
+# Fix 1.2 — PATCH auto-inference respects explicit manually_enriched
+# ---------------------------------------------------------------------------
+
+
+def test_patch_explicit_manually_enriched_false(db_session, admin_agent):
+    """PATCH with description + manually_enriched=false keeps the flag false."""
+    txn = _create_txn(
+        db_session, admin_agent, description=None, date="2026-01-15",
+        force_create=True,
+    )
+    # manually_enriched should be False (no description on create)
+    assert txn.manually_enriched is False
+
+    result = transactions.patch_transaction(
+        txn.id,
+        TransactionUpdate(description="bank string", manually_enriched=False),
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert result["data"].description == "bank string"
+    assert result["data"].manually_enriched is False
+
+
+def test_patch_auto_infers_manually_enriched_when_omitted(db_session, admin_agent):
+    """PATCH with description but no manually_enriched field → auto-infer True."""
+    txn = _create_txn(
+        db_session, admin_agent, description=None, date="2026-01-16",
+        force_create=True,
+    )
+    assert txn.manually_enriched is False
+
+    result = transactions.patch_transaction(
+        txn.id,
+        TransactionUpdate(description="human note"),
+        agent=admin_agent,
+        db=db_session,
+    )
+    assert result["data"].description == "human note"
+    assert result["data"].manually_enriched is True
+
+
+# ---------------------------------------------------------------------------
+# Fix 1.3 — Warn-band response includes data key
+# ---------------------------------------------------------------------------
+
+
+def test_warn_band_response_includes_data(db_session, admin_agent):
+    """When a POST hits the warn band (score 60-84), the response must include data."""
+    # Seed a transaction
+    _seed_txn(db_session, admin_agent, description="Office Depot paper", date="2026-03-10")
+
+    # Submit something that scores in the probable-match range
+    # Same amount, 2 days off, shorter description
+    result = transactions.create_transaction(
+        TransactionCreate(
+            scope="salon",
+            type="expense",
+            amount=80.0,
+            category="supplies",
+            date="2026-03-12",
+            description="Office Depot",
+        ),
+        agent=admin_agent,
+        db=db_session,
+    )
+    if result.get("created") and result.get("probable_match"):
+        # Hit the warn band — verify data key is present
+        assert "data" in result, "Warn-band response must include 'data' key"
+        assert result["data"].id is not None
+        assert "match_score" in result

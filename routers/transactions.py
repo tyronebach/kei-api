@@ -278,6 +278,7 @@ def create_transaction(
     if probable_match is not None:
         return {
             "created": True,
+            "data": TransactionOut.from_orm_cents(txn),
             "probable_match": TransactionOut.from_orm_cents(probable_match),
             "match_score": probable_score,
         }
