@@ -222,10 +222,12 @@ def test_transactions_crud(db_session, admin_agent):
 
 
 def test_manually_enriched_flag_persists(db_session, admin_agent):
-    """PATCH a transaction with manually_enriched=True → flag persists on subsequent GET."""
+    """manually_enriched=True is auto-inferred on create when description is set,
+    and persists on subsequent GET."""
     created = _create_txn(db_session, admin_agent)
     txn_id = created.id
-    assert created.manually_enriched is False
+    # description="test" is set by _create_txn → auto-inferred as manually_enriched
+    assert created.manually_enriched is True
 
     updated = transactions.update_transaction(
         txn_id,
@@ -264,7 +266,8 @@ def test_manually_enriched_in_list_response(db_session, admin_agent):
     txns = result["data"]
     assert len(txns) == 2
     flags = {t.category: t.manually_enriched for t in txns}
-    assert flags["haircut"] is False
+    # haircut: created with description="test" → auto-inferred manually_enriched=True
+    assert flags["haircut"] is True
     assert flags["color"] is True
 
 

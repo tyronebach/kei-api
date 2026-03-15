@@ -264,6 +264,12 @@ def create_transaction(
     data["amount"] = amount_cents
     data["created_by"] = agent.agent_id
 
+    # Auto-infer manually_enriched: any non-Tributary write with description or entity_id
+    # is by definition a human enrichment — Rem shouldn't have to set this flag explicitly.
+    if not body.external_source and not data.get("manually_enriched"):
+        if body.description or body.entity_id:
+            data["manually_enriched"] = True
+
     txn = Transaction(**data)
     db.add(txn)
     db.commit()
@@ -403,6 +409,12 @@ def patch_transaction(
     update_data = body.model_dump(exclude_unset=True)
     if "amount" in update_data:
         update_data["amount"] = _dollars_to_cents(update_data["amount"])
+
+    # Auto-infer manually_enriched on PATCH: if Rem is adding description or entity_id,
+    # treat that as human enrichment without requiring the flag to be passed explicitly.
+    if ("description" in update_data or "entity_id" in update_data):
+        if not txn.manually_enriched and "manually_enriched" not in update_data:
+            update_data["manually_enriched"] = True
 
     for key, value in update_data.items():
         setattr(txn, key, value)
