@@ -295,6 +295,7 @@ def list_transactions(
     to_date: str | None = Query(None, alias="to"),
     payment_method: Annotated[str | None, Query()] = None,
     external_source: Annotated[str | None, Query()] = None,
+    external_id: Annotated[str | None, Query()] = None,
     sort: str = Query("date", pattern="^(date|created_at|amount)$"),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
@@ -317,6 +318,8 @@ def list_transactions(
         q = q.filter(Transaction.payment_method == payment_method)
     if external_source is not None:
         q = q.filter(Transaction.external_source == external_source)
+    if external_id is not None:
+        q = q.filter(Transaction.external_id == external_id)
     total = q.count()
 
     sort_col = {

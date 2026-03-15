@@ -43,11 +43,12 @@ def test_same_external_identity_returns_existing_row(db_session, admin_agent):
 
 
 def test_normal_write_without_external_identity(db_session, admin_agent):
-    """Normal writes (no external identity) create distinct rows each time."""
-    body = _make_body()
+    """Normal writes (no external identity) with distinct amounts create distinct rows."""
+    body1 = _make_body(amount=42.50)
+    body2 = _make_body(amount=99.00)  # different amount → fails 5% gate → below fuzzy threshold
 
-    first = transactions.create_transaction(body, agent=admin_agent, db=db_session)
-    second = transactions.create_transaction(body, agent=admin_agent, db=db_session)
+    first = transactions.create_transaction(body1, agent=admin_agent, db=db_session)
+    second = transactions.create_transaction(body2, agent=admin_agent, db=db_session)
 
     assert first["data"].id != second["data"].id
 
@@ -63,6 +64,34 @@ def test_normal_write_without_external_identity(db_session, admin_agent):
         db=db_session,
     )
     assert all_txns["meta"]["total"] == 2
+
+
+def test_identical_manual_writes_warn_band(db_session, admin_agent):
+    """Identical manual writes (same date/amount, no description) hit the warn band.
+
+    Null+null description scores 50 (ambiguous). Total = 100*0.4 + 50*0.4 + 100*0.2 = 80.
+    Hard block threshold is ≥92 — so both writes succeed but second carries a probable_match warning.
+    """
+    body = _make_body()
+
+    first = transactions.create_transaction(body, agent=admin_agent, db=db_session)
+    second = transactions.create_transaction(body, agent=admin_agent, db=db_session)
+
+    assert first.get("data") is not None, "First write should succeed"
+    # Score 80 → warn band: written (created=True) but probable_match returned (no data key)
+    assert second.get("created") is True, "Second write should be recorded (warn band, not blocked)"
+    assert second.get("probable_match") is not None, "Should carry a probable_match warning"
+    assert second["match_score"] == 80
+
+def test_identical_manual_writes_with_description_hard_blocked(db_session, admin_agent):
+    """Identical manual writes WITH matching description hit the hard block (score ≥92)."""
+    body = _make_body(description="Kevin - haircut")
+
+    first = transactions.create_transaction(body, agent=admin_agent, db=db_session)
+    second = transactions.create_transaction(body, agent=admin_agent, db=db_session)
+
+    assert first.get("data") is not None, "First write should succeed"
+    assert second.get("matched") is True, "Second identical write with description should be hard-blocked"
 
 
 def test_external_identity_must_be_paired(db_session, admin_agent):
