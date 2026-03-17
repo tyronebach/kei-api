@@ -207,9 +207,15 @@ def create_transaction(
         existing = db.query(Transaction).filter(
             Transaction.external_source == body.external_source,
             Transaction.external_id == body.external_id,
-            Transaction.deleted_at.is_(None),
         ).first()
         if existing is not None:
+            if existing.deleted_at is not None:
+                # Restore soft-deleted row instead of failing on UNIQUE constraint
+                existing.deleted_at = None
+                existing.updated_by = agent.agent_id
+                db.commit()
+                db.refresh(existing)
+                return {"restored": True, "data": TransactionOut.from_orm_cents(existing)}
             return {"data": TransactionOut.from_orm_cents(existing)}
 
     amount_cents = _dollars_to_cents(body.amount)
