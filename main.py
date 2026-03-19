@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 from config import settings
 from db.connection import SessionLocal
-from routers import entities, items, lists, services, summary, transactions
+from routers import audit, entities, items, lists, services, summary, transactions
 
 app = FastAPI(title="Kei API", version="0.2.0")
 
@@ -19,6 +19,7 @@ if settings.cors_origins:
         allow_headers=["Authorization", "Content-Type"],
     )
 
+app.include_router(audit.router)
 app.include_router(entities.router)
 app.include_router(transactions.router)
 app.include_router(items.router)
