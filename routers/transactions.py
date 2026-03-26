@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from rapidfuzz import fuzz
+from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from db.connection import get_db
@@ -303,6 +304,8 @@ def list_transactions(
     payment_method: Annotated[str | None, Query()] = None,
     external_source: Annotated[str | None, Query()] = None,
     external_id: Annotated[str | None, Query()] = None,
+    bank: Annotated[str | None, Query()] = None,
+    account_mask: Annotated[str | None, Query()] = None,
     sort: str = Query("date", pattern="^(date|created_at|amount)$"),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
@@ -327,6 +330,10 @@ def list_transactions(
         q = q.filter(Transaction.external_source == external_source)
     if external_id is not None:
         q = q.filter(Transaction.external_id == external_id)
+    if bank is not None:
+        q = q.filter(sa_func.json_extract(Transaction.meta, "$.bank") == bank)
+    if account_mask is not None:
+        q = q.filter(sa_func.json_extract(Transaction.meta, "$.account_mask") == account_mask)
     total = q.count()
 
     sort_col = {
