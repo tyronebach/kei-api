@@ -291,6 +291,34 @@ class ItemMovementOut(BaseModel):
 # --- Services ---
 
 
+# --- Snapshots ---
+
+
+class SnapshotCreate(StrictInput):
+    scope: str
+    date: str
+    data: dict
+
+    @field_validator("date")
+    @classmethod
+    def validate_date(cls, value: str) -> str:
+        return _validate_date_str(value)
+
+
+class SnapshotOut(BaseModel):
+    id: str
+    scope: str
+    date: str
+    data: dict
+    created_by: str | None = None
+    created_at: int
+
+    model_config = {"from_attributes": True}
+
+
+# --- Services ---
+
+
 class ServiceCreate(StrictInput):
     scope: str
     name: str = Field(min_length=1)

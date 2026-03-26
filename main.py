@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 from config import settings
 from db.connection import SessionLocal
-from routers import audit, entities, items, lists, services, summary, transactions
+from routers import audit, entities, items, lists, services, snapshots, summary, transactions
 
 app = FastAPI(title="Kei API", version="0.2.0")
 
@@ -25,6 +25,7 @@ app.include_router(transactions.router)
 app.include_router(items.router)
 app.include_router(services.router)
 app.include_router(lists.router)
+app.include_router(snapshots.router)
 app.include_router(summary.router)
 
 

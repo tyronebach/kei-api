@@ -152,6 +152,22 @@ class Service(Base):
     updated_at: Mapped[int] = mapped_column(Integer, default=_now, onupdate=_now)
 
 
+class Snapshot(Base):
+    __tablename__ = "snapshots"
+    __table_args__ = (
+        UniqueConstraint("scope", "date", name="uq_snapshots_scope_date"),
+        Index("idx_snapshots_scope", "scope"),
+        Index("idx_snapshots_date", "date"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_generate_id)
+    scope: Mapped[str] = mapped_column(String, nullable=False)
+    date: Mapped[str] = mapped_column(String, nullable=False)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[int] = mapped_column(Integer, default=_now)
+
+
 class AgentToken(Base):
     __tablename__ = "agent_tokens"
 
