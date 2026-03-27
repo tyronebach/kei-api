@@ -255,6 +255,10 @@ kei list clear shopping --checked-only
 # This month's overview
 kei summary
 
+# Household pulse — full financial picture in one command
+# (net worth + scope breakdown + month-over-month trends, always cross-scope)
+kei summary pulse
+
 # Specific period
 kei summary --period week
 kei summary --period custom --from 2026-01-01 --to 2026-01-31
@@ -266,20 +270,57 @@ kei -s salon summary --source bank --period year
 
 # Compare to previous period
 kei summary trends --period month
+kei summary trends --scope home     # override global scope
 kei summary trends --source bank    # bank-verified trend only
 
 # Busiest days
 kei summary by-day
+kei summary by-day --scope salon
 
-# Cross-scope breakdown
+# Cross-scope breakdown (defaults to ALL scopes — no scope filter)
 kei summary by-scope
+kei summary by-scope --period year
+kei summary by-scope --scope home   # single scope
 
-# Monthly P&L (last 12 months by default)
+# Category breakdown ranked by total
+kei summary by-category --scope home --period month
+kei summary by-category --type expense    # expense categories only
+kei summary by-category --type income     # income categories only
+
+# Monthly P&L (defaults to ALL scopes, last 12 months)
 kei summary by-month
-kei -s salon summary by-month --from 2025-01-01 --to 2025-12-31
+kei summary by-month --scope salon        # single scope
 kei summary by-month --source bank        # bank-verified income/expenses only
 kei summary by-month --source cash        # cash transactions only
 kei summary by-month -f json              # machine-readable
+```
+
+**Scope behavior for summary subcommands:**
+- `kei summary` (overview): respects global `-s` scope
+- `by-scope`, `by-month`, `by-category`: default to all scopes (cross-scope view)
+- `trends`, `by-day`: respect global `-s` scope, accept `--scope` override
+- `pulse`: always cross-scope, ignores global `-s`
+- All subcommands accept `--scope <name>` or `--scope all`
+
+### Snapshots (financial)
+
+```bash
+# Latest snapshot (net worth, accounts, investments, spending)
+kei snapshot
+
+# List all snapshots
+kei snapshot list
+
+# Show a specific date
+kei snapshot show 2026-03-20
+
+# Compare snapshots (net worth delta)
+kei snapshot diff 2026-03-17              # compare to latest
+kei snapshot diff 2026-03-17 2026-03-25   # compare two dates
+
+# JSON output
+kei snapshot --format json
+kei snapshot list --format json
 ```
 
 ---
@@ -355,7 +396,13 @@ Kei CLI wraps the [Kei API](../kei-api/README.md). All commands map to REST endp
 | `list show` | `GET /api/lists/items?list=...` |
 | `list add` | `POST /api/lists/items` |
 | `summary` | `GET /api/summary` |
+| `summary pulse` | Composite: `/api/snapshots/latest` + `/api/summary/by-scope` + `/api/summary/trends` |
 | `summary trends` | `GET /api/summary/trends` |
 | `summary by-day` | `GET /api/summary/by-day` |
 | `summary by-scope` | `GET /api/summary/by-scope` |
 | `summary by-month` | `GET /api/summary/by-month` |
+| `summary by-category` | `GET /api/summary/by-category` |
+| `snapshot` | `GET /api/snapshots/latest` |
+| `snapshot list` | `GET /api/snapshots` |
+| `snapshot show` | `GET /api/snapshots/latest` or by date/ID |
+| `snapshot diff` | Composite: two snapshot fetches + delta |

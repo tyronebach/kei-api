@@ -908,6 +908,92 @@ Monthly income/expense breakdown. Defaults to last 12 months. Fills months with 
 
 ---
 
+### `GET /api/summary/by-category`
+
+Category breakdown ranked by total amount descending. Groups by (category, type) so income and expense categories are separate.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `scope` | string | — | Filter by scope |
+| `period` | string | `month` | `today`, `week`, `month`, `year`, `custom` |
+| `from` | string | — | Required if `period=custom` |
+| `to` | string | — | Required if `period=custom` |
+| `type` | string | — | `income` or `expense` (omit for both) |
+| `source` | string | — | `bank`, `cash`, `agent`, `all` |
+| `payment_method` | string | — | Filter by payment method |
+| `limit` | int | 20 | Max categories to return |
+
+**Response:**
+```json
+{
+  "data": {
+    "period": { "from": "2026-03-01", "to": "2026-03-27" },
+    "categories": [
+      { "category": "rent", "type": "expense", "total": 3600.00, "count": 1, "percent": 43.8 },
+      { "category": "income", "type": "income", "total": 7351.32, "count": 4, "percent": 91.9 }
+    ],
+    "totals": { "income": 7996.81, "expenses": 8213.04 }
+  }
+}
+```
+
+---
+
+## Snapshots
+
+Financial snapshots — household net worth, account balances, investments, spending by scope.
+
+### `POST /api/snapshots`
+
+Create or upsert a snapshot. Matching (scope, date) replaces the existing record.
+
+**Body:**
+```json
+{
+  "scope": "household",
+  "date": "2026-03-27",
+  "data": { "net_worth": { ... }, "liquid_accounts": [ ... ], ... }
+}
+```
+
+| Field | Type | Required |
+|-------|------|----------|
+| `scope` | string | yes |
+| `date` | string | yes (YYYY-MM-DD) |
+| `data` | object | yes (arbitrary JSON blob) |
+
+---
+
+### `GET /api/snapshots`
+
+List snapshots with optional filters.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `scope` | string | — | Filter by scope |
+| `from` | string | — | Start date (inclusive) |
+| `to` | string | — | End date (inclusive) |
+| `limit` | int | 50 | Max results (max 500) |
+| `offset` | int | 0 | Pagination offset |
+
+---
+
+### `GET /api/snapshots/latest`
+
+Get the most recent snapshot for a scope.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `scope` | string | `household` | Scope to query |
+
+---
+
+### `GET /api/snapshots/{id}`
+
+Get a specific snapshot by ID.
+
+---
+
 ## Error Codes
 
 | Status | Meaning |
