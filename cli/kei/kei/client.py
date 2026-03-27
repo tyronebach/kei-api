@@ -334,6 +334,23 @@ class KeiClient:
         return self._handle_response(r)
 
 
+    # === Snapshots ===
+
+    def snapshot_list(self, **params) -> list:
+        """List snapshots."""
+        r = self._get("/api/snapshots", params=params)
+        return self._handle_response(r)
+
+    def snapshot_latest(self, scope: str = "household") -> dict:
+        """Get latest snapshot."""
+        r = self._get("/api/snapshots/latest", params={"scope": scope})
+        return self._handle_response(r)
+
+    def snapshot_get(self, snapshot_id: str) -> dict:
+        """Get snapshot by ID."""
+        r = self._get(f"/api/snapshots/{snapshot_id}")
+        return self._handle_response(r)
+
     # === Summary ===
 
     def summary(self, **params) -> dict:

@@ -11,6 +11,7 @@ from .entities import app as entities_app
 from .items import app as items_app
 from .lists import app as lists_app
 from .services import app as services_app
+from .snapshots import app as snapshots_app
 from .summary import app as summary_app
 from .transactions import app as transactions_app
 
@@ -26,6 +27,7 @@ app.add_typer(transactions_app, name="tx")
 app.add_typer(items_app, name="item")
 app.add_typer(services_app, name="service")
 app.add_typer(lists_app, name="list")
+app.add_typer(snapshots_app, name="snapshot")
 app.add_typer(summary_app, name="summary")
 
 
