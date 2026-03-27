@@ -404,6 +404,74 @@ def get_by_day(
     }
 
 
+@router.get("/by-category")
+def get_by_category(
+    scope: str | None = None,
+    period: str = Query("month"),
+    from_date: str | None = Query(None, alias="from"),
+    to_date: str | None = Query(None, alias="to"),
+    type: str | None = Query(None, description="Filter: income or expense"),
+    payment_method: Annotated[str | None, Query()] = None,
+    source: Annotated[str | None, Query()] = None,
+    limit: int = Query(20, ge=1, le=100),
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    """Return categories ranked by total amount, grouped by type."""
+    start, end = _resolve_period(period, from_date, to_date)
+
+    q = db.query(
+        Transaction.category,
+        Transaction.type,
+        func.sum(Transaction.amount).label("total_cents"),
+        func.count().label("count"),
+    ).filter(
+        Transaction.date >= start,
+        Transaction.date <= end,
+        Transaction.deleted_at.is_(None),
+    )
+    q = apply_scope_filter(q, Transaction, scope, agent)
+    q = _apply_source_filter(q, source, payment_method)
+
+    if type and type in ("income", "expense"):
+        q = q.filter(Transaction.type == type)
+
+    rows = q.group_by(Transaction.category, Transaction.type).all()
+
+    # Compute type totals for percent calculation
+    type_totals: dict[str, float] = {"income": 0.0, "expense": 0.0}
+    for row in rows:
+        type_totals[row.type] = type_totals.get(row.type, 0.0) + (row.total_cents or 0)
+
+    categories = []
+    for row in rows:
+        total_dollars = round((row.total_cents or 0) / 100, 2)
+        type_total = type_totals.get(row.type, 0)
+        pct = round(((row.total_cents or 0) / type_total) * 100, 1) if type_total else 0.0
+        categories.append({
+            "category": row.category,
+            "type": row.type,
+            "total": total_dollars,
+            "count": row.count,
+            "percent": pct,
+        })
+
+    # Sort by total descending
+    categories.sort(key=lambda c: c["total"], reverse=True)
+    categories = categories[:limit]
+
+    return {
+        "data": {
+            "period": {"from": start, "to": end},
+            "categories": categories,
+            "totals": {
+                "income": round(type_totals.get("income", 0) / 100, 2),
+                "expenses": round(type_totals.get("expense", 0) / 100, 2),
+            },
+        }
+    }
+
+
 @router.get("/by-month")
 def get_by_month(
     scope: str | None = None,
