@@ -17,11 +17,20 @@ router = APIRouter(
 )
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+VALID_PERIODS = {"today", "week", "month", "year", "custom"}
+VALID_SOURCES = {"bank", "cash", "agent", "all"}
+VALID_CATEGORY_TYPES = {"income", "expense"}
 
 
 def _resolve_period(
     period: str, from_date: str | None, to_date: str | None
 ) -> tuple[str, str]:
+    if period not in VALID_PERIODS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid period '{period}'. Expected one of: {sorted(VALID_PERIODS)}",
+        )
+
     today = date.today()
     if period == "today":
         return str(today), str(today)
@@ -46,7 +55,7 @@ def _resolve_period(
                 detail="'from' date must be less than or equal to 'to' date.",
             )
         return start.isoformat(), end.isoformat()
-    return f"{today.year}-{today.month:02d}-01", str(today)
+    raise HTTPException(status_code=422, detail=f"Invalid period '{period}'")
 
 
 def _previous_period(start: str, end: str) -> tuple[str, str]:
@@ -68,6 +77,12 @@ def _apply_source_filter(q, source: str | None, payment_method: str | None):
       agent → external_source IS NULL AND payment_method != "cash"
       all / None → no filter
     """
+    if source is not None and source not in VALID_SOURCES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid source '{source}'. Expected one of: {sorted(VALID_SOURCES)}",
+        )
+
     if source == "bank":
         q = q.filter(Transaction.external_source == "tributary")
     elif source == "cash":
@@ -433,7 +448,15 @@ def get_by_category(
     q = apply_scope_filter(q, Transaction, scope, agent)
     q = _apply_source_filter(q, source, payment_method)
 
-    if type and type in ("income", "expense"):
+    if type is not None:
+        if type not in VALID_CATEGORY_TYPES:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Invalid category type '{type}'. "
+                    f"Expected one of: {sorted(VALID_CATEGORY_TYPES)}"
+                ),
+            )
         q = q.filter(Transaction.type == type)
 
     rows = q.group_by(Transaction.category, Transaction.type).all()
@@ -490,8 +513,6 @@ def get_by_month(
     today = date.today()
     if from_date is None:
         # Last 12 months: start of month 11 months ago
-        start_month = today.replace(day=1) - timedelta(days=today.replace(day=1).toordinal() - 1)
-        # Simpler: subtract ~365 days and go to start of that month
         start_d = (today - timedelta(days=365)).replace(day=1)
         start = start_d.isoformat()
     else:

@@ -257,8 +257,8 @@ Query params:
 | `type` | `income` or `expense` |
 | `category` | Comma-separated category names |
 | `entity_id` | Linked entity ID |
-| `from` | Start date, inclusive |
-| `to` | End date, inclusive |
+| `from` | Start date, inclusive, strict `YYYY-MM-DD` |
+| `to` | End date, inclusive, strict `YYYY-MM-DD` |
 | `payment_method` | Exact payment method |
 | `external_source` | Exact external source |
 | `external_id` | Exact external ID |
@@ -354,6 +354,8 @@ Body:
 - `in`: add quantity
 - `out`: subtract quantity; returns `409` if stock is insufficient
 - `adjustment`: set absolute quantity
+
+If `transaction_id` is supplied, it must reference an active transaction the caller can access in the same scope as the item.
 
 Response:
 
@@ -488,6 +490,8 @@ Common query params for `/api/summary`, `/trends`, `/by-scope`, `/by-day`, and `
 | `payment_method` | Exact payment method |
 | `source` | `bank`, `cash`, `agent`, or `all` |
 
+Invalid `period`, `source`, or by-category `type` values return `422`.
+
 Source mapping:
 
 - `bank`: `external_source == "tributary"`
@@ -561,8 +565,8 @@ Query params:
 | Param | Notes |
 |---|---|
 | `scope` | Optional scope filter |
-| `from` | Start date, inclusive |
-| `to` | End date, inclusive |
+| `from` | Start date, inclusive, strict `YYYY-MM-DD` |
+| `to` | End date, inclusive, strict `YYYY-MM-DD` |
 | `limit` | Default 50, max 500 |
 | `offset` | Default 0 |
 

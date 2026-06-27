@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from db.connection import get_db
 from db.helpers import active_query, apply_scope_filter, get_scoped_or_404
-from db.models import Item, ItemMovement
+from db.models import Item, ItemMovement, Transaction
 from dependencies import AgentPrincipal, get_current_agent, validate_scope
 from schemas import (
     ItemAdjust,
@@ -161,6 +161,26 @@ def adjust_item(
         raise HTTPException(status_code=403, detail="Read-only token")
 
     item = get_scoped_or_404(db, Item, item_id, agent)
+    if body.transaction_id is not None:
+        txn = db.query(Transaction).filter(
+            Transaction.id == body.transaction_id,
+            Transaction.deleted_at.is_(None),
+        ).first()
+        if txn is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Transaction '{body.transaction_id}' not found",
+            )
+        if not agent.can_access_scope(txn.scope):
+            raise HTTPException(status_code=403, detail="No access to this transaction's scope")
+        if txn.scope != item.scope:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Transaction '{body.transaction_id}' belongs to scope "
+                    f"'{txn.scope}', not '{item.scope}'"
+                ),
+            )
 
     if body.type == "in":
         stmt = (

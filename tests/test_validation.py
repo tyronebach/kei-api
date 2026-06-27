@@ -2,7 +2,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from routers import entities, summary
+from routers import entities, snapshots, summary, transactions
 from schemas import EntityCreate, ItemAdjust, ItemCreate, ListItemCreate, TransactionCreate
 
 
@@ -66,6 +66,104 @@ def test_summary_invalid_custom_dates_raise_422(db_session, admin_agent):
             period="custom",
             from_date="not-a-date",
             to_date="2026-02-01",
+            agent=admin_agent,
+            db=db_session,
+        )
+    assert exc.value.status_code == 422
+
+
+def test_summary_invalid_period_raises_422(db_session, admin_agent):
+    with pytest.raises(HTTPException) as exc:
+        summary.get_summary(
+            scope="salon",
+            period="quarter",
+            from_date=None,
+            to_date=None,
+            agent=admin_agent,
+            db=db_session,
+        )
+    assert exc.value.status_code == 422
+
+
+def test_summary_invalid_source_raises_422(db_session, admin_agent):
+    with pytest.raises(HTTPException) as exc:
+        summary.get_summary(
+            scope="salon",
+            period="month",
+            from_date=None,
+            to_date=None,
+            source="bnak",
+            agent=admin_agent,
+            db=db_session,
+        )
+    assert exc.value.status_code == 422
+
+
+def test_summary_invalid_category_type_raises_422(db_session, admin_agent):
+    with pytest.raises(HTTPException) as exc:
+        summary.get_by_category(
+            scope="salon",
+            period="month",
+            from_date=None,
+            to_date=None,
+            type="profit",
+            limit=20,
+            agent=admin_agent,
+            db=db_session,
+        )
+    assert exc.value.status_code == 422
+
+
+def test_transaction_invalid_date_filters_raise_422(db_session, admin_agent):
+    for invalid_date in ("not-a-date", "20260320", "2026-W12-5"):
+        with pytest.raises(HTTPException) as exc:
+            transactions.list_transactions(
+                scope="salon",
+                from_date=invalid_date,
+                to_date=None,
+                sort="date",
+                limit=50,
+                offset=0,
+                agent=admin_agent,
+                db=db_session,
+            )
+        assert exc.value.status_code == 422
+
+    with pytest.raises(HTTPException) as exc:
+        transactions.list_transactions(
+            scope="salon",
+            from_date=None,
+            to_date="not-a-date",
+            sort="date",
+            limit=50,
+            offset=0,
+            agent=admin_agent,
+            db=db_session,
+        )
+    assert exc.value.status_code == 422
+
+
+def test_snapshot_invalid_date_filters_raise_422(db_session, admin_agent):
+    for invalid_date in ("not-a-date", "20260320", "2026-W12-5"):
+        with pytest.raises(HTTPException) as exc:
+            snapshots.list_snapshots(
+                scope="salon",
+                from_date=invalid_date,
+                to_date=None,
+                limit=50,
+                offset=0,
+                agent=admin_agent,
+                db=db_session,
+            )
+        assert exc.value.status_code == 422
+
+    with pytest.raises(HTTPException) as exc:
+        snapshots.list_snapshots(
+            scope="salon",
+            from_date=None,
+            to_date="not-a-date",
+            limit=50,
+            offset=0,
             agent=admin_agent,
             db=db_session,
         )

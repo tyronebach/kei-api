@@ -118,6 +118,7 @@ def get_entity_insights(
 ):
     # Aggregate transaction activity per entity (income only = "visits")
     activity_q = db.query(
+        Transaction.scope,
         Transaction.entity_id,
         func.count(Transaction.id).label("visit_count"),
         func.sum(Transaction.amount).label("total_spend"),
@@ -128,8 +129,8 @@ def get_entity_insights(
         Transaction.deleted_at.is_(None),
     )
     activity_q = apply_scope_filter(activity_q, Transaction, scope, agent)
-    activity_rows = activity_q.group_by(Transaction.entity_id).all()
-    activity = {row.entity_id: row for row in activity_rows}
+    activity_rows = activity_q.group_by(Transaction.scope, Transaction.entity_id).all()
+    activity = {(row.scope, row.entity_id): row for row in activity_rows}
 
     # Get entities with optional creation date filters
     q = apply_scope_filter(active_query(db, Entity), Entity, scope, agent)
@@ -148,7 +149,7 @@ def get_entity_insights(
     today = date.today()
     results = []
     for e in entities:
-        a = activity.get(e.id)
+        a = activity.get((e.scope, e.id))
         entry = {
             "id": e.id,
             "scope": e.scope,
@@ -215,6 +216,7 @@ def get_entity_activity(
         )
         .filter(
             Transaction.entity_id == entity_id,
+            Transaction.scope == entity.scope,
             Transaction.type == "income",
             Transaction.deleted_at.is_(None),
         )
@@ -234,6 +236,7 @@ def get_entity_activity(
         )
         .filter(
             Transaction.entity_id == entity_id,
+            Transaction.scope == entity.scope,
             Transaction.type == "income",
             Transaction.deleted_at.is_(None),
         )
@@ -247,6 +250,7 @@ def get_entity_activity(
         db.query(Transaction)
         .filter(
             Transaction.entity_id == entity_id,
+            Transaction.scope == entity.scope,
             Transaction.deleted_at.is_(None),
         )
         .order_by(Transaction.date.desc(), Transaction.created_at.desc())

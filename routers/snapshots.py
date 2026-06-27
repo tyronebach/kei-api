@@ -6,6 +6,7 @@ from db.helpers import apply_scope_filter
 from db.models import Snapshot
 from dependencies import AgentPrincipal, get_current_agent, validate_scope
 from schemas import SnapshotCreate, SnapshotOut
+from utils import parse_date
 
 router = APIRouter(prefix="/api/snapshots", tags=["snapshots"])
 
@@ -21,10 +22,10 @@ def list_snapshots(
     db: Session = Depends(get_db),
 ):
     q = apply_scope_filter(db.query(Snapshot), Snapshot, scope, agent)
-    if from_date:
-        q = q.filter(Snapshot.date >= from_date)
-    if to_date:
-        q = q.filter(Snapshot.date <= to_date)
+    if from_date is not None:
+        q = q.filter(Snapshot.date >= parse_date(from_date, "from").isoformat())
+    if to_date is not None:
+        q = q.filter(Snapshot.date <= parse_date(to_date, "to").isoformat())
     q = q.order_by(Snapshot.date.desc())
     return q.offset(offset).limit(limit).all()
 

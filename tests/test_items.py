@@ -1,8 +1,8 @@
 import pytest
 from fastapi import HTTPException
 
-from routers import items
-from schemas import ItemAdjust, ItemCreate, ItemUpdate
+from routers import items, transactions
+from schemas import ItemAdjust, ItemCreate, ItemUpdate, TransactionCreate
 
 
 def _create_item(db_session, agent, **overrides):
@@ -92,6 +92,32 @@ def test_item_adjust_and_movement_history(db_session, admin_agent):
         db=db_session,
     )
     assert movements["meta"]["total"] == 3
+
+
+def test_item_adjust_rejects_cross_scope_transaction_id(db_session, admin_agent):
+    item = _create_item(db_session, admin_agent, scope="salon")
+    txn = transactions.create_transaction(
+        TransactionCreate(
+            scope="home",
+            type="expense",
+            amount=20.0,
+            category="supplies",
+            date="2026-03-20",
+        ),
+        agent=admin_agent,
+        db=db_session,
+    )["data"]
+
+    with pytest.raises(HTTPException) as exc:
+        items.adjust_item(
+            item.id,
+            ItemAdjust(type="adjustment", quantity=8.0, transaction_id=txn.id),
+            agent=admin_agent,
+            db=db_session,
+        )
+
+    assert exc.value.status_code == 422
+    assert "belongs to scope" in exc.value.detail
 
 
 def test_low_stock_filter(db_session, admin_agent):

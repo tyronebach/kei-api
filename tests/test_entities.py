@@ -1,6 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
+from db.models import Transaction
 from routers import entities
 from routers import transactions
 from schemas import EntityCreate, EntityUpdate, TransactionCreate
@@ -96,6 +97,17 @@ def test_entity_activity_and_insights(db_session, admin_agent):
         category="supplies",
         date="2026-02-12",
     )
+    db_session.add(
+        Transaction(
+            scope="home",
+            type="income",
+            amount=99900,
+            category="bad-link",
+            date="2026-02-13",
+            entity_id=entity_id,
+        )
+    )
+    db_session.commit()
 
     activity = entities.get_entity_activity(entity_id, agent=admin_agent, db=db_session)
     data = activity["data"]
@@ -113,3 +125,30 @@ def test_entity_activity_and_insights(db_session, admin_agent):
     )
     ids = {row["id"] for row in insights["data"]}
     assert entity_id in ids
+
+
+def test_entity_insights_ignore_cross_scope_bad_links_when_scope_omitted(db_session, admin_agent):
+    entity = _create_entity(db_session, admin_agent, name="No Real Visits")
+    db_session.add(
+        Transaction(
+            scope="home",
+            type="income",
+            amount=99900,
+            category="bad-link",
+            date="2026-02-13",
+            entity_id=entity.id,
+        )
+    )
+    db_session.commit()
+
+    insights = entities.get_entity_insights(
+        scope=None,
+        min_visits=1,
+        sort="visits",
+        limit=20,
+        agent=admin_agent,
+        db=db_session,
+    )
+
+    ids = {row["id"] for row in insights["data"]}
+    assert entity.id not in ids

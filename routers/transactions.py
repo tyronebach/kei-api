@@ -13,6 +13,7 @@ from db.helpers import active_query, apply_scope_filter, get_scoped_or_404
 from db.models import Entity, Transaction
 from dependencies import AgentPrincipal, get_current_agent, validate_scope
 from schemas import TransactionCreate, TransactionOut, TransactionUpdate
+from utils import parse_date
 
 router = APIRouter(
     prefix="/api/transactions",
@@ -326,9 +327,9 @@ def list_transactions(
     if entity_id:
         q = q.filter(Transaction.entity_id == entity_id)
     if from_date is not None:
-        q = q.filter(Transaction.date >= from_date)
+        q = q.filter(Transaction.date >= parse_date(from_date, "from").isoformat())
     if to_date is not None:
-        q = q.filter(Transaction.date <= to_date)
+        q = q.filter(Transaction.date <= parse_date(to_date, "to").isoformat())
     if payment_method is not None:
         q = q.filter(Transaction.payment_method == payment_method)
     if external_source is not None:
