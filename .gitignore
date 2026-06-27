@@ -14,4 +14,5 @@ build/
 
 
 CODEX*.md
-IMP*.mdkei.db.bak*
+IMP*.md
+kei.db.bak*
