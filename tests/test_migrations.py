@@ -16,25 +16,47 @@ import sqlalchemy as sa
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_alembic_upgrade(db_path: str) -> None:
-    """Run `alembic upgrade head` against a temporary DB path."""
+def run_alembic(db_path: str, *args: str) -> subprocess.CompletedProcess[str]:
     env = {
         **os.environ,
         "KEI_DATABASE_URL": f"sqlite:///{db_path}",
         "KEI_API_TOKEN": "test-token",
         "KEI_ALLOW_INSECURE_DEFAULT_TOKEN": "true",
     }
-    result = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
+    return subprocess.run(
+        [sys.executable, "-m", "alembic", *args],
         cwd=str(ROOT),
         env=env,
         capture_output=True,
         text=True,
     )
+
+
+def run_alembic_upgrade(db_path: str) -> None:
+    """Run `alembic upgrade head` against a temporary DB path."""
+    result = run_alembic(db_path, "upgrade", "head")
     if result.returncode != 0:
         raise RuntimeError(
             f"alembic upgrade head failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
         )
+
+
+def _table_exists(db_path: Path, table: str) -> bool:
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as conn:
+            return (
+                conn.execute(
+                    sa.text(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type='table' AND name=:table"
+                    ),
+                    {"table": table},
+                ).fetchone()
+                is not None
+            )
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture(scope="module")
@@ -117,6 +139,45 @@ def test_transactions_amount_is_integer(migrated_engine):
     # SQLite stores types loosely; check the declared type contains INTEGER
     col_type = cols["amount"]["type"].upper()
     assert "INT" in col_type, f"Expected INTEGER type for amount, got: {col_type}"
+
+
+def test_payment_method_constraint_downgrade_fails_loudly(tmp_path):
+    db_path = tmp_path / "downgrade.db"
+    upgrade_result = run_alembic(str(db_path), "upgrade", "e1f2a3b4c5d6")
+    assert upgrade_result.returncode == 0
+
+    result = run_alembic(str(db_path), "downgrade", "d1e2f3a4b5c6")
+
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "Downgrade e1f2a3b4c5d6 is unsupported" in output
+    assert "payment_method CHECK constraint" in output
+
+
+def test_alembic_current_still_works_with_downgrade_guard(tmp_path):
+    db_path = tmp_path / "current.db"
+    run_alembic_upgrade(str(db_path))
+
+    result = run_alembic(str(db_path), "current")
+
+    assert result.returncode == 0
+    assert "73fc7456f3d0" in result.stdout
+
+
+@pytest.mark.parametrize("target", ["d1e2f3a4b5c6", "-2"])
+def test_payment_method_constraint_downgrade_from_head_fails_before_later_changes(
+    tmp_path,
+    target,
+):
+    db_path = tmp_path / f"downgrade-head-{target}.db"
+    run_alembic_upgrade(str(db_path))
+
+    result = run_alembic(str(db_path), "downgrade", target)
+
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "Downgrade across e1f2a3b4c5d6 is unsupported" in output
+    assert _table_exists(db_path, "snapshots")
 
 
 def test_snapshots_have_unique_scope_date_constraint(migrated_engine):

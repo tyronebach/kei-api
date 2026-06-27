@@ -130,3 +130,14 @@ Current revision chain:
 8. `73fc7456f3d0` snapshots table
 
 Historical migrations remain in the chain even when a feature has been removed.
+The active chain is intentionally not squashed; a squashed baseline is deferred
+major maintenance that requires a coordinated deployment reset plan. The
+recurring-rule migrations stay historical because deployed databases may have
+already traversed them.
+
+Downgrades are best-effort only when they can be tested without risking data.
+The `e1f2a3b4c5d6` payment-method-constraint downgrade fails loudly on SQLite
+instead of pretending to remove a CHECK constraint. SQLite downgrades from
+later revisions to a target before `e1f2a3b4c5d6` are guarded before any later
+downgrade step runs. Use backup restore, downgrade only to `e1f2a3b4c5d6`, or a
+tested forward migration for rollback around that revision.

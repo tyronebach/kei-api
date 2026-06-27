@@ -78,8 +78,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("idx_transactions_payment_method", table_name="transactions")
-
-    # Remove CHECK constraint by recreating table without it
-    with op.batch_alter_table("transactions", recreate="always") as batch_op:
-        pass
+    raise NotImplementedError(
+        "Downgrade e1f2a3b4c5d6 is unsupported: removing the SQLite "
+        "payment_method CHECK constraint requires a deliberate table rebuild. "
+        "Restore from backup or create a tested forward migration instead."
+    )

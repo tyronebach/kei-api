@@ -91,6 +91,19 @@ Rollback one revision:
 .venv/bin/alembic downgrade -1
 ```
 
+Downgrades are not the primary rollback mechanism for production SQLite data.
+The active migration chain remains intact and is not squashed. Historical
+migrations for removed features, including recurring rules, stay in the chain
+for deployed databases that already traversed them. A squashed baseline is
+deferred major maintenance and requires a coordinated reset plan.
+
+The `e1f2a3b4c5d6` payment-method-constraint downgrade intentionally fails on
+SQLite because removing that CHECK constraint requires a deliberate table
+rebuild. SQLite downgrades from later revisions to a target before
+`e1f2a3b4c5d6` are guarded before any later downgrade step runs. Restore a
+known-good backup, downgrade only to `e1f2a3b4c5d6`, or ship a tested forward
+migration instead.
+
 Schema changes must use Alembic. Do not evolve runtime schema with `Base.metadata.create_all()`.
 
 ## Agent Token Provisioning
