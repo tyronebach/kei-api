@@ -22,16 +22,33 @@ def _fmt_dollar(v) -> str:
     return f"${v:,.2f}"
 
 
+def _render_error(message: str) -> None:
+    rprint(f"[red]{message}[/red]")
+    raise typer.Exit(1)
+
+
+def _snapshot_payload(snapshot) -> tuple[str, dict]:
+    if not isinstance(snapshot, dict):
+        _render_error("Snapshot response must be an object.")
+
+    snap_data = snapshot.get("data", snapshot)
+    if not isinstance(snap_data, dict):
+        _render_error("Snapshot data must be an object.")
+
+    return snapshot.get("date", ""), snap_data
+
+
+def _net_worth(snapshot_data: dict) -> dict:
+    net_worth = snapshot_data.get("net_worth")
+    if not isinstance(net_worth, dict):
+        _render_error("Snapshot data is missing required net_worth object.")
+    return net_worth
+
+
 def _render_snapshot(data: dict, verbose: bool = False) -> None:
     """Pretty-print a snapshot."""
-    snap_date = data.get("date", "")
-    snap_data = data.get("data", data)
-
-    # If this is a SnapshotOut envelope, unwrap
-    if "data" in data and isinstance(data["data"], dict) and "net_worth" in data["data"]:
-        snap_data = data["data"]
-
-    nw = snap_data.get("net_worth", {})
+    snap_date, snap_data = _snapshot_payload(data)
+    nw = _net_worth(snap_data)
     rprint(f"[bold]Financial Snapshot — {snap_date}[/bold]")
     rprint()
     rprint(f"  [bold green]Total Assets:[/bold green]      {_fmt_dollar(nw.get('total_assets'))}")
@@ -186,8 +203,8 @@ def list_snapshots(
     table.add_column("ID", max_width=12)
 
     for snap in results:
-        snap_data = snap.get("data", {})
-        nw = snap_data.get("net_worth", {})
+        _, snap_data = _snapshot_payload(snap)
+        nw = _net_worth(snap_data)
         table.add_row(
             snap.get("date", ""),
             snap.get("scope", ""),
@@ -258,8 +275,10 @@ def diff_snapshots(
     else:
         snap2 = client.snapshot_latest(scope=scope)
 
-    d1 = snap1.get("data", {}).get("net_worth", {})
-    d2 = snap2.get("data", {}).get("net_worth", {})
+    _, snap_data1 = _snapshot_payload(snap1)
+    _, snap_data2 = _snapshot_payload(snap2)
+    d1 = _net_worth(snap_data1)
+    d2 = _net_worth(snap_data2)
 
     rprint(f"[bold]Snapshot Diff: {snap1.get('date')} → {snap2.get('date')}[/bold]")
     rprint()

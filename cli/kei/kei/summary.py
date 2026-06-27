@@ -370,8 +370,12 @@ def pulse(
     today_str = date.today().isoformat()
 
     # 1. Net worth from latest household snapshot
-    try:
-        snap = client.snapshot_latest(scope="household")
+    snap_response = client._get("/api/snapshots/latest", params={"scope": "household"})
+    if snap_response.status_code == 404:
+        has_snapshot = False
+        net_worth = assets = liabilities = 0
+    else:
+        snap = client._handle_response(snap_response)
         # Response has top-level id/scope/date/data; net worth is in data.net_worth
         snap_inner = snap.get("data", snap)
         nw = snap_inner.get("net_worth", {})
@@ -384,24 +388,15 @@ def pulse(
             assets = snap_inner.get("total_assets", 0)
             liabilities = snap_inner.get("total_liabilities", 0)
         has_snapshot = True
-    except SystemExit:
-        has_snapshot = False
-        net_worth = assets = liabilities = 0
 
     # 2. This month by scope
-    try:
-        scope_result = client.summary_by_scope(period="month")
-        scope_data = scope_result.get("data", scope_result)
-        scopes = scope_data.get("scopes", [])
-    except SystemExit:
-        scopes = []
+    scope_result = client.summary_by_scope(period="month")
+    scope_data = scope_result.get("data", scope_result)
+    scopes = scope_data.get("scopes", [])
 
     # 3. Trends (month vs previous month)
-    try:
-        trends_result = client.summary_trends(period="month")
-        trends_data = trends_result.get("data", trends_result)
-    except SystemExit:
-        trends_data = {}
+    trends_result = client.summary_trends(period="month")
+    trends_data = trends_result.get("data", trends_result)
 
     # Render
     rprint(f"[bold]═══ Household Pulse — {today_str} ═══[/bold]")

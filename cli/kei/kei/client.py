@@ -112,18 +112,13 @@ class KeiClient:
         if len(short_id.replace("-", "")) >= 32:
             return short_id
         params = self._add_scope({"limit": 200})
-        try:
-            r = self._get(list_endpoint, params=params)
-            if r.status_code < 400:
-                data = r.json().get("data", [])
-                resolved = resolve_id(data, short_id)
-                if resolved:
-                    return resolved
-                # resolve_id already printed error; exit
-                sys.exit(1)
-        except Exception:
-            pass
-        return short_id
+        r = self._get(list_endpoint, params=params)
+        payload = self._handle_response(r)
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        resolved = resolve_id(data, short_id)
+        if resolved:
+            return resolved
+        sys.exit(1)
 
     # === Entities ===
 
