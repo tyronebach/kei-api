@@ -2,6 +2,7 @@
 import pytest
 from fastapi import HTTPException
 
+from db.models import Transaction
 from routers import transactions
 from schemas import TransactionCreate
 
@@ -40,6 +41,48 @@ def test_same_external_identity_returns_existing_row(db_session, admin_agent):
         db=db_session,
     )
     assert all_txns["meta"]["total"] == 1
+
+
+def test_same_scope_external_identity_restores_soft_deleted_row(db_session, admin_agent):
+    body = _make_body(external_source="tributary", external_id="txn-restore-123")
+
+    first = transactions.create_transaction(body, agent=admin_agent, db=db_session)
+    transactions.delete_transaction(first["data"].id, agent=admin_agent, db=db_session)
+    second = transactions.create_transaction(body, agent=admin_agent, db=db_session)
+
+    assert second["restored"] is True
+    assert second["data"].id == first["data"].id
+
+    active_count = db_session.query(Transaction).filter(
+        Transaction.scope == "home",
+        Transaction.deleted_at.is_(None),
+    ).count()
+    assert active_count == 1
+
+
+def test_cross_scope_external_identity_collision_returns_409(db_session, admin_agent):
+    body = _make_body(external_source="tributary", external_id="txn-cross-scope-123")
+    transactions.create_transaction(body, agent=admin_agent, db=db_session)
+
+    with pytest.raises(HTTPException) as exc:
+        transactions.create_transaction(
+            _make_body(
+                scope="salon",
+                external_source="tributary",
+                external_id="txn-cross-scope-123",
+            ),
+            agent=admin_agent,
+            db=db_session,
+        )
+
+    assert exc.value.status_code == 409
+    assert "another scope" in exc.value.detail
+
+    salon_count = db_session.query(Transaction).filter(
+        Transaction.scope == "salon",
+        Transaction.deleted_at.is_(None),
+    ).count()
+    assert salon_count == 0
 
 
 def test_normal_write_without_external_identity(db_session, admin_agent):

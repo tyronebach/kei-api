@@ -1,120 +1,120 @@
 # Kei API Reference
 
-**Base URL:** `http://localhost:8081` (local dev) or your deployed host
-**Version:** 0.2.0
+Base URL for local development: `http://127.0.0.1:8081`
 
----
+FastAPI app version: `0.2.0`
 
 ## Authentication
 
-All endpoints (except `/health`) require a Bearer token.
+All `/api/*` endpoints require:
 
-```
+```http
 Authorization: Bearer <token>
 ```
 
-**Token types:**
+`/health`, `/docs`, `/redoc`, and `/openapi.json` are public.
 
-| Type | How it works | Capabilities |
-|------|-------------|--------------|
-| Admin token | Matches `KEI_API_TOKEN` env var exactly | All scopes (`*`), read + write |
-| Agent token | SHA-256 hash matched against `agent_tokens` table | Scoped access, configurable permissions |
+Token resolution:
 
-A read-only agent token can only call GET endpoints. Write endpoints (POST, PUT, PATCH, DELETE) return `403` for tokens without `write` permission.
+| Type | Resolution | Access |
+|---|---|---|
+| Agent token | SHA-256 bearer token hash matches `agent_tokens.token_hash` | Uses row `allowed_scopes` and `permissions` |
+| Admin fallback | Bearer token exactly matches `KEI_API_TOKEN` | `allowed_scopes=["*"]`, `permissions=["read","write"]` |
 
----
+Write endpoints require `write` permission. Missing or invalid tokens return `401`; read-only tokens on write endpoints return `403`.
 
 ## Scopes
 
-Every resource is namespaced by a `scope` string. Agents can only access scopes they are authorized for. Valid scopes are configured via `KEI_VALID_SCOPES` (default: `home`, `salon`, `woodwards`, `synthhub`).
+Standard resources are scoped. Create and update paths validate submitted scopes against `KEI_VALID_SCOPES`.
 
-Passing an invalid scope returns `422`. Accessing a scope outside the agent's allowed list returns `403`.
+Default configured scopes in code:
 
----
-
-## Response Format
-
-**Success (single resource):**
 ```json
-{
-  "data": { ... }
-}
+["home", "salon", "woodwards", "synthhub", "household"]
 ```
 
-**Success (list):**
+Scope rules for standard scoped list endpoints:
+
+- If `scope` is provided, the caller must be allowed to access that scope.
+- If `scope` is omitted and the caller has `allowed_scopes=["*"]`, the query spans all scopes.
+- If `scope` is omitted and the caller is scoped, the query is constrained to that caller's allowed scopes.
+
+## Response Shapes
+
+Most resource endpoints use an envelope:
+
 ```json
-{
-  "data": [ ... ],
-  "meta": { "count": 10, "total": 42 }
-}
+{"data": {"id": "..."}}
 ```
 
-**Error:**
+Most list endpoints return:
+
+```json
+{"data": [], "meta": {"count": 0, "total": 0}}
+```
+
+Exceptions in the current app:
+
+- Snapshot endpoints return raw `SnapshotOut` objects or raw arrays because the router uses `response_model` directly.
+- `/api/audit` returns a raw stats object.
+- `DELETE /api/audit/soft-deleted` returns a raw `{ "deleted_count": N }` object.
+
+Errors are normalized:
+
 ```json
 {
   "error": true,
   "status": 422,
   "message": "Validation error",
-  "details": [ ... ]
+  "details": []
 }
 ```
 
----
-
-## Common Query Parameters
-
-These appear across multiple list endpoints:
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `scope` | string | — | Filter by scope |
-| `limit` | int | 50 | Max results (max 200) |
-| `offset` | int | 0 | Pagination offset |
-
----
+HTTP exceptions use the same shape without `details`.
 
 ## Common Fields
 
-All scoped resources share these output fields:
+Standard scoped resources share:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | UUID hex identifier |
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | UUID hex |
 | `scope` | string | Namespace |
-| `meta` | object \| null | Arbitrary JSON extension point |
-| `created_by` | string \| null | Agent ID that created the record |
-| `updated_by` | string \| null | Agent ID that last updated the record |
-| `created_at` | int | Unix epoch timestamp |
-| `updated_at` | int | Unix epoch timestamp |
+| `created_by` | string or null | Agent that created the row |
+| `updated_by` | string or null | Agent that last updated the row |
+| `created_at` | integer | Unix epoch seconds |
+| `updated_at` | integer | Unix epoch seconds |
 
-All resources use **soft delete** — `DELETE` sets a `deleted_at` timestamp rather than removing the row.
-
----
+`entities`, `transactions`, `items`, and `services` also include `meta`. `entities`, `transactions`, `items`, `services`, and `list_items` use soft delete through `deleted_at`, which is not exposed in normal output.
 
 ## Health
 
 ### `GET /health`
 
-No authentication required. Tests database connectivity.
+Public database connectivity check.
 
-**Response:**
+Success:
+
 ```json
-{ "status": "ok" }
+{"status": "ok"}
 ```
 
-Returns `503` with `{ "status": "unhealthy" }` if the database is unreachable.
+Failure:
 
----
+```json
+{"status": "unhealthy"}
+```
+
+with HTTP `503`.
 
 ## Entities
 
-Contacts, clients, vendors — any named entity linked to transactions.
+Entities are contacts, clients, vendors, places, or other named references.
 
 ### `POST /api/entities`
 
-Create a new entity.
+Body:
 
-**Body:**
 ```json
 {
   "scope": "salon",
@@ -123,178 +123,87 @@ Create a new entity.
   "phone": "555-1234",
   "email": "jane@example.com",
   "notes": "Prefers mornings",
-  "tags": ["vip", "regular"],
-  "meta": { "referral_source": "instagram" }
+  "tags": ["vip"],
+  "meta": {"referral_source": "instagram"}
 }
 ```
 
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `scope` | string | yes | Must be a valid scope |
-| `name` | string | yes | Min length 1 |
-| `type` | string | no | Free-form (e.g. `client`, `vendor`) |
-| `phone` | string | no | |
-| `email` | string | no | |
-| `notes` | string | no | |
-| `tags` | string[] | no | Deduplicated, no empty strings |
-| `meta` | object | no | |
-
-**Response:** `{ "data": EntityOut }`
-
----
+Required: `scope`, `name`.
 
 ### `GET /api/entities`
 
-List entities with optional search and filters.
+Query params:
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `scope` | string | Filter by scope |
-| `search` | string | Fuzzy search across name, email, phone |
-| `type` | string | Filter by entity type |
-| `tag` | string | Filter by tag (exact match within JSON array) |
-| `limit` | int | Default 50, max 200 |
-| `offset` | int | Default 0 |
+| Param | Notes |
+|---|---|
+| `scope` | Optional scope filter |
+| `search` | Fuzzy search across `name`, `email`, `phone` |
+| `type` | Exact entity type |
+| `tag` | Exact value inside `tags` JSON array |
+| `limit` | Default 50, max 200 |
+| `offset` | Default 0 |
 
-**Without search:** Returns `{ "data": [EntityOut], "meta": { "count", "total" } }` ordered by `updated_at` desc.
-
-**With search:** Returns scored results:
-```json
-{
-  "data": [
-    {
-      "id": "...",
-      "name": "Jane Doe",
-      "score": 0.92,
-      "match_type": "exact",
-      ...
-    }
-  ],
-  "meta": {
-    "count": 1,
-    "total": 1,
-    "query": "jane",
-    "confident": true,
-    "best_match": "abc123"
-  }
-}
-```
-
-`match_type` values: `exact`, `fuzzy`, `phonetic`, `partial`
-
----
+Search responses include `score`, `match_type`, and meta fields `query`, `confident`, and `best_match`.
 
 ### `GET /api/entities/insights`
 
-Aggregate entity activity — visit counts, spend totals, sorted/filtered.
+Aggregate income transaction activity by entity.
 
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `scope` | string | — | Filter by scope |
-| `inactive_days` | int | — | Only entities whose last visit was >= N days ago |
-| `min_visits` | int | — | Only entities with >= N visits |
-| `created_after` | string | — | YYYY-MM-DD |
-| `created_before` | string | — | YYYY-MM-DD |
-| `sort` | string | `last_visit` | One of: `last_visit`, `total_spend`, `visits`, `name` |
-| `limit` | int | 20 | Max 200 |
+Query params:
 
-**Response item shape:**
-```json
-{
-  "id": "...",
-  "scope": "salon",
-  "name": "Jane Doe",
-  "type": "client",
-  "visit_count": 12,
-  "total_spend": 840.00,
-  "last_visit": "2026-03-10"
-}
-```
-
----
+| Param | Notes |
+|---|---|
+| `scope` | Optional scope filter |
+| `inactive_days` | Include entities whose last visit is at least this many days ago; entities with no visits qualify |
+| `min_visits` | Minimum income transaction count |
+| `created_after` | Entity created after `YYYY-MM-DD` |
+| `created_before` | Entity created before `YYYY-MM-DD` |
+| `sort` | `last_visit`, `total_spend`, `visits`, or `name`; default `last_visit` |
+| `limit` | Default 20, max 200 |
 
 ### `GET /api/entities/{entity_id}`
 
-Get a single entity by ID.
-
-**Response:** `{ "data": EntityOut }`
-
-Returns `404` if not found or soft-deleted. Returns `403` if out of scope.
-
----
+Returns one active entity.
 
 ### `GET /api/entities/{entity_id}/activity`
 
-Detailed activity for an entity — spend stats, category breakdown, recent transactions.
+Returns entity details plus income transaction stats:
 
-**Response:**
-```json
-{
-  "data": {
-    "id": "...",
-    "name": "Jane Doe",
-    "total_spend": 840.00,
-    "visit_count": 12,
-    "first_visit": "2025-06-15",
-    "last_visit": "2026-03-10",
-    "avg_spend": 70.00,
-    "by_category": [
-      { "category": "haircut", "total": 600.00, "count": 8 }
-    ],
-    "recent_transactions": [
-      {
-        "id": "...",
-        "type": "income",
-        "amount": 80.00,
-        "category": "haircut",
-        "description": "Trim + style",
-        "date": "2026-03-10",
-        "payment_method": "etransfer"
-      }
-    ]
-  }
-}
-```
-
----
+- `total_spend`
+- `visit_count`
+- `first_visit`
+- `last_visit`
+- `avg_spend`
+- `by_category`
+- `recent_transactions`
 
 ### `PUT /api/entities/{entity_id}`
 
-Update an entity. Only fields included in the body are changed (exclude_unset).
-
-**Body:** Same fields as `EntityCreate`, all optional.
-
-**Response:** `{ "data": EntityOut }`
-
----
+Partial update. Same fields as create, all optional.
 
 ### `DELETE /api/entities/{entity_id}`
 
-Soft-delete an entity.
+Soft delete.
 
-**Response:**
 ```json
-{ "data": { "id": "...", "deleted": true } }
+{"data": {"id": "...", "deleted": true}}
 ```
-
----
 
 ## Transactions
 
-Financial records — income and expenses. Amounts are **dollars** in the API (stored as integer cents internally).
+Transactions are income and expense ledger rows. API amounts are dollars; storage uses integer cents.
 
 ### `POST /api/transactions`
 
-Create a transaction with built-in deduplication and reconciliation.
+Body:
 
-**Body:**
 ```json
 {
   "scope": "salon",
   "type": "income",
-  "amount": 80.00,
+  "amount": 80.0,
   "category": "haircut",
-  "description": "Trim + style for Jane",
+  "description": "Trim and style",
   "date": "2026-03-10",
   "entity_id": "abc123",
   "external_source": "tributary",
@@ -307,129 +216,82 @@ Create a transaction with built-in deduplication and reconciliation.
 }
 ```
 
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `scope` | string | yes | |
-| `type` | `"income"` \| `"expense"` | yes | |
-| `amount` | float | yes | Dollars, must be > 0 |
-| `category` | string | yes | |
-| `description` | string | no | |
-| `date` | string | yes | YYYY-MM-DD |
-| `entity_id` | string | no | FK to entities (must match scope) |
-| `external_source` | string | no | Must pair with `external_id` |
-| `external_id` | string | no | Must pair with `external_source` |
-| `tags` | string[] | no | |
-| `payment_method` | string | no | `cash`, `etransfer`, `card`, `bank`, `cheque`, `other` |
-| `manually_enriched` | bool | no | Auto-inferred if description or entity_id provided |
-| `meta` | object | no | |
-| `force_create` | bool | no | Skip duplicate checking |
+Required: `scope`, `type`, `amount`, `category`, `date`.
 
-**Deduplication behavior:**
+Validation:
 
-The response includes extra flags depending on what happened:
+- `type` is `income` or `expense`.
+- `amount` must be positive.
+- `date` is strict `YYYY-MM-DD`.
+- `payment_method` is `cash`, `etransfer`, `card`, `bank`, `cheque`, or `other`.
+- `external_source` and `external_id` must be provided together.
+- `entity_id`, if provided, must reference an active entity in the same scope.
+
+Create response flags:
 
 | Flag | Meaning |
-|------|---------|
-| `"created": true` | New row inserted |
-| `"reconciled": true` | Tributary import matched & claimed an existing manual row |
-| `"enriched": true` | Manual write enriched an existing bank import |
-| `"matched": true` | High-confidence duplicate found (not created) |
-| `"restored": true` | Re-submitted external_id restored a soft-deleted row |
-| `"probable_match"` | Medium-confidence match found — row was still created, but a warning is returned with the probable duplicate |
+|---|---|
+| `created` | New row inserted |
+| `matched` | High-confidence duplicate found; no row inserted |
+| `probable_match` | Medium-confidence duplicate warning; row still inserted |
+| `match_score` | Duplicate score paired with `probable_match` |
+| `reconciled` | External import claimed an existing manually enriched row |
+| `enriched` | Manual write updated an existing Tributary row |
+| `restored` | Reused external identity restored a soft-deleted row |
 
-**Idempotency:** Re-submitting the same `(external_source, external_id)` pair returns the existing row without creating a duplicate.
+Duplicate behavior:
 
----
+- Manual writes without `external_source` score amount, description, and date proximity.
+- `external_source="tributary"` writes score amount and date against manually enriched unclaimed rows.
+- Reusing an existing `(external_source, external_id)` in the same scope returns or restores that row instead of inserting.
+- Reusing an existing `(external_source, external_id)` from another scope returns `409` without exposing that row.
+- `force_create=true` skips duplicate/reconcile checks.
 
 ### `GET /api/transactions`
 
-List transactions with filters and sorting.
+Query params:
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `scope` | string | Filter by scope |
-| `type` | string | `income` or `expense` |
-| `category` | string | Comma-separated categories |
-| `entity_id` | string | Filter by linked entity |
-| `from` | string | Start date (YYYY-MM-DD), inclusive |
-| `to` | string | End date (YYYY-MM-DD), inclusive |
-| `payment_method` | string | Filter by payment method |
-| `external_source` | string | Filter by external source |
-| `external_id` | string | Filter by external ID |
-| `sort` | string | `date` (default), `created_at`, `amount` — all descending |
-| `limit` | int | Default 50, max 200 |
-| `offset` | int | Default 0 |
-
-**Response:** `{ "data": [TransactionOut], "meta": { "count", "total" } }`
-
----
+| Param | Notes |
+|---|---|
+| `scope` | Optional scope filter |
+| `type` | `income` or `expense` |
+| `category` | Comma-separated category names |
+| `entity_id` | Linked entity ID |
+| `from` | Start date, inclusive |
+| `to` | End date, inclusive |
+| `payment_method` | Exact payment method |
+| `external_source` | Exact external source |
+| `external_id` | Exact external ID |
+| `bank` | `meta.bank` value |
+| `account_mask` | `meta.account_mask` value |
+| `sort` | `date`, `created_at`, or `amount`; all descending |
+| `limit` | Default 50, max 200 |
+| `offset` | Default 0 |
 
 ### `GET /api/transactions/{transaction_id}`
 
-**Response:** `{ "data": TransactionOut }`
-
----
+Returns one active transaction.
 
 ### `PUT /api/transactions/{transaction_id}`
 
-Full update. All provided fields are applied.
-
-**Body:** Same fields as `TransactionCreate` minus `force_create`, all optional. Amount in dollars.
-
----
+Partial update. Same writable fields as create except `force_create`. If `amount` is provided it is converted from dollars to cents.
 
 ### `PATCH /api/transactions/{transaction_id}`
 
-Partial update — only explicitly sent fields are changed. Used for enrichment (linking entity_id, adding description to bank imports, etc.).
-
-Auto-infers `manually_enriched = true` when description or entity_id is added via PATCH.
-
-**Body:** Same shape as PUT.
-
----
+Minimal partial update, intended for enrichment/linking. If `description` or `entity_id` is added and `manually_enriched` is not explicitly supplied, the server sets `manually_enriched=true`.
 
 ### `DELETE /api/transactions/{transaction_id}`
 
-Soft-delete.
-
-**Response:** `{ "data": { "id": "...", "deleted": true } }`
-
----
-
-### TransactionOut shape
-
-```json
-{
-  "id": "...",
-  "scope": "salon",
-  "type": "income",
-  "amount": 80.00,
-  "category": "haircut",
-  "description": "Trim + style",
-  "date": "2026-03-10",
-  "entity_id": "abc123",
-  "external_source": "tributary",
-  "external_id": "plaid_txn_456",
-  "tags": ["walk-in"],
-  "payment_method": "etransfer",
-  "manually_enriched": true,
-  "meta": {},
-  "created_by": "admin",
-  "updated_by": "admin",
-  "created_at": 1741564800,
-  "updated_at": 1741564800
-}
-```
-
----
+Soft delete.
 
 ## Items
 
-Inventory items with stock tracking and movement history.
+Inventory items with stock quantities and movement history.
 
 ### `POST /api/items`
 
-**Body:**
+Body:
+
 ```json
 {
   "scope": "salon",
@@ -438,139 +300,89 @@ Inventory items with stock tracking and movement history.
   "quantity": 24,
   "unit": "bottle",
   "reorder_threshold": 5,
-  "notes": "Brand X preferred",
+  "notes": "Brand X",
   "tags": ["hair-care"],
   "meta": {}
 }
 ```
 
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `scope` | string | yes | |
-| `name` | string | yes | Min length 1 |
-| `category` | string | no | |
-| `quantity` | float | no | Default 0, must be >= 0 |
-| `unit` | string | no | Default `"unit"` |
-| `reorder_threshold` | float | no | Triggers low-stock alerts |
-| `notes` | string | no | |
-| `tags` | string[] | no | |
-| `meta` | object | no | |
-
----
+Required: `scope`, `name`. `quantity` defaults to `0`; `unit` defaults to `unit`.
 
 ### `GET /api/items`
 
-List items with optional fuzzy search.
+Query params:
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `scope` | string | Filter by scope |
-| `search` | string | Fuzzy search across name, category, notes |
-| `category` | string | Filter by category |
-| `limit` | int | Default 50, max 200 |
-| `offset` | int | Default 0 |
-
-Search response includes `score`, `match_type`, `confident`, `best_match` (same shape as entity search).
-
----
+| Param | Notes |
+|---|---|
+| `scope` | Optional scope filter |
+| `search` | Fuzzy search across `name`, `category`, `notes` |
+| `category` | Exact category |
+| `limit` | Default 50, max 200 |
+| `offset` | Default 0 |
 
 ### `GET /api/items/low-stock`
 
-Returns items where `quantity <= reorder_threshold`, ordered by quantity ascending.
+Returns active items with `reorder_threshold` set and `quantity <= reorder_threshold`.
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `scope` | string | Filter by scope |
-
-**Response:** `{ "data": [ItemOut], "meta": { "count" } }`
-
----
+Query params: `scope`.
 
 ### `GET /api/items/{item_id}`
 
-**Response:** `{ "data": ItemOut }`
-
----
+Returns one active item.
 
 ### `GET /api/items/{item_id}/movements`
 
-Stock movement history for an item.
+Movement history for an item.
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `limit` | int | Default 50, max 200 |
-| `offset` | int | Default 0 |
-
-**Response item shape:**
-```json
-{
-  "id": "...",
-  "item_id": "...",
-  "type": "in",
-  "quantity": 12.0,
-  "reason": "Restock delivery",
-  "transaction_id": null,
-  "created_at": 1741564800
-}
-```
-
----
+Query params: `limit` default 50 max 200, `offset` default 0.
 
 ### `POST /api/items/{item_id}/adjust`
 
-Adjust item quantity — add stock, remove stock, or set absolute quantity.
+Body:
 
-**Body:**
 ```json
 {
-  "type": "in",
-  "quantity": 12,
-  "reason": "Restock delivery",
+  "type": "out",
+  "quantity": 2,
+  "reason": "Used for client",
   "transaction_id": "txn_abc"
 }
 ```
 
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `type` | `"in"` \| `"out"` \| `"adjustment"` | yes | |
-| `quantity` | float | yes | > 0 for `in`/`out`, >= 0 for `adjustment` |
-| `reason` | string | no | Human-readable reason |
-| `transaction_id` | string | no | Link to related transaction |
+`type` is:
 
-**Behavior:**
-- `in` — adds to current quantity
-- `out` — subtracts from current quantity; returns `409` if insufficient stock
-- `adjustment` — sets quantity to the given value
+- `in`: add quantity
+- `out`: subtract quantity; returns `409` if stock is insufficient
+- `adjustment`: set absolute quantity
 
-**Response:** `{ "data": ItemOut, "meta": { "movement_id": "..." } }`
+Response:
 
----
+```json
+{"data": {"id": "..."}, "meta": {"movement_id": "..."}}
+```
 
 ### `PUT /api/items/{item_id}`
 
-Update item fields. Same shape as create body, all optional.
-
----
+Partial update.
 
 ### `DELETE /api/items/{item_id}`
 
-Soft-delete.
-
----
+Soft delete.
 
 ## Services
 
-Service catalog — offered services with pricing and duration.
+Service catalog entries with price and optional duration.
 
 ### `POST /api/services`
 
-**Body:**
+Body:
+
 ```json
 {
   "scope": "salon",
   "name": "Haircut",
   "category": "hair",
-  "price": 45.00,
+  "price": 45.0,
   "duration_minutes": 30,
   "notes": "Includes wash",
   "tags": ["popular"],
@@ -578,439 +390,237 @@ Service catalog — offered services with pricing and duration.
 }
 ```
 
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `scope` | string | yes | |
-| `name` | string | yes | Min length 1 |
-| `category` | string | no | |
-| `price` | float | yes | Must be > 0 |
-| `duration_minutes` | int | no | |
-| `notes` | string | no | |
-| `tags` | string[] | no | |
-| `meta` | object | no | |
-
----
+Required: `scope`, `name`, `price`.
 
 ### `GET /api/services`
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `scope` | string | Filter by scope |
-| `category` | string | Filter by category |
-| `tag` | string | Filter by tag (exact match within JSON array) |
-| `limit` | int | Default 50, max 200 |
-| `offset` | int | Default 0 |
+Query params:
 
-Results ordered by name ascending.
+| Param | Notes |
+|---|---|
+| `scope` | Optional scope filter |
+| `category` | Exact category |
+| `tag` | Exact value inside `tags` JSON array |
+| `limit` | Default 50, max 200 |
+| `offset` | Default 0 |
 
----
+Results are ordered by service name.
 
 ### `GET /api/services/{service_id}`
 
-**Response:** `{ "data": ServiceOut }`
-
----
+Returns one active service.
 
 ### `PUT /api/services/{service_id}`
 
-Update service. Same shape as create body, all optional.
-
----
+Partial update.
 
 ### `DELETE /api/services/{service_id}`
 
-Soft-delete.
-
----
+Soft delete.
 
 ## Lists
 
-Checklist/to-do items grouped by named lists. Lists are free-form — no upfront creation needed.
+List items are lightweight checklist or note rows grouped by a free-form `list` name.
 
 ### `GET /api/lists`
 
-Get list summaries — distinct (scope, list) pairs with counts.
+Returns distinct `(scope, list)` pairs with counts.
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `scope` | string | Filter by scope |
-
-**Response:**
-```json
-{
-  "data": [
-    {
-      "scope": "home",
-      "list": "groceries",
-      "total": 8,
-      "checked": 3,
-      "unchecked": 5
-    }
-  ],
-  "meta": { "count": 1 }
-}
-```
-
----
+Query params: `scope`.
 
 ### `GET /api/lists/items`
 
-List individual items across lists.
+Query params:
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `scope` | string | Filter by scope |
-| `list` | string | Filter by list name |
-| `checked` | bool | Filter by checked status |
-| `limit` | int | Default 50, max 200 |
-| `offset` | int | Default 0 |
+| Param | Notes |
+|---|---|
+| `scope` | Optional scope filter |
+| `list` | Exact list name |
+| `checked` | Boolean checked state |
+| `limit` | Default 50, max 200 |
+| `offset` | Default 0 |
 
-Results ordered by position asc, then created_at asc.
-
----
+Results are ordered by `position`, then `created_at`.
 
 ### `POST /api/lists/items`
 
-Create a list item.
+Body:
 
-**Body:**
 ```json
 {
   "scope": "home",
   "list": "groceries",
-  "content": "Milk 2L",
+  "content": "Milk",
   "position": 1
 }
 ```
 
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `scope` | string | yes | |
-| `list` | string | yes | List name (free-form) |
-| `content` | string | yes | Min length 1 |
-| `position` | int | no | Auto-assigned if omitted (max + 1) |
-
----
+Required: `scope`, `list`, `content`. If `position` is omitted, the server appends to the end of that scoped list.
 
 ### `PUT /api/lists/items/{item_id}`
 
-Update a list item.
-
-**Body:**
-```json
-{
-  "content": "Milk 1L",
-  "checked": true,
-  "position": 2,
-  "list": "groceries"
-}
-```
-
-All fields optional.
-
----
+Partial update fields: `content`, `checked`, `position`, `list`.
 
 ### `DELETE /api/lists/items/{item_id}`
 
-Soft-delete a single list item.
-
----
+Soft delete one list item.
 
 ### `DELETE /api/lists`
 
-Clear an entire list (or just checked items).
+Soft clear a list.
 
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `scope` | string | yes | |
-| `list` | string | yes | List name |
-| `checked_only` | bool | no | Default `false`. If `true`, only delete checked items |
+Required query params: `scope`, `list`.
 
-**Response:**
-```json
-{ "data": { "list": "groceries", "scope": "home", "deleted_count": 3 } }
-```
-
----
+Optional query param: `checked_only`, default `false`.
 
 ## Summary
 
-Aggregate financial analytics. All amounts in dollars.
+Financial aggregate endpoints. Amounts are returned in dollars. All summary endpoints enforce the standard scope rules.
 
-### Common Summary Parameters
+Common query params for `/api/summary`, `/trends`, `/by-scope`, `/by-day`, and `/by-category`:
 
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `scope` | string | — | Filter by scope |
-| `period` | string | `month` | `today`, `week`, `month`, `year`, `custom` |
-| `from` | string | — | YYYY-MM-DD (required if `period=custom`) |
-| `to` | string | — | YYYY-MM-DD (required if `period=custom`) |
-| `payment_method` | string | — | Filter by payment method |
-| `source` | string | — | `bank`, `cash`, `agent`, `all` |
+| Param | Notes |
+|---|---|
+| `scope` | Optional scope filter |
+| `period` | `today`, `week`, `month`, `year`, `custom`; default `month` |
+| `from` | Required for `period=custom` |
+| `to` | Required for `period=custom` |
+| `payment_method` | Exact payment method |
+| `source` | `bank`, `cash`, `agent`, or `all` |
 
-**Period resolution:**
-- `today` — current day
-- `week` — Monday through today
-- `month` — 1st of current month through today
-- `year` — Jan 1 through today
-- `custom` — requires `from` and `to`
+Source mapping:
 
-**Source filter mapping:**
-- `bank` — `external_source == "tributary"`
-- `cash` — `payment_method == "cash"`
-- `agent` — no external source and not cash
-- `all` — no filter
-
----
+- `bank`: `external_source == "tributary"`
+- `cash`: `payment_method == "cash"`
+- `agent`: `external_source IS NULL` and `payment_method != "cash"`; rows with null `payment_method` do not match this filter in the current SQL query
+- `all` or omitted: no source filter
 
 ### `GET /api/summary`
 
-Period summary with income/expense totals, top categories, client metrics, and inventory alerts.
-
-**Response:**
-```json
-{
-  "data": {
-    "period": { "from": "2026-03-01", "to": "2026-03-17" },
-    "income": { "total": 4200.00, "count": 52 },
-    "expenses": { "total": 1100.00, "count": 15 },
-    "profit": 3100.00,
-    "top_income": [
-      { "category": "haircut", "total": 2800.00, "count": 35 }
-    ],
-    "top_expenses": [
-      { "category": "supplies", "total": 400.00, "count": 3 }
-    ],
-    "clients": {
-      "active": 28,
-      "new": 5,
-      "returning": 23
-    },
-    "inventory_alerts": 2
-  }
-}
-```
-
----
+Returns period totals, top income and expense categories, client metrics, and inventory alert count.
 
 ### `GET /api/summary/trends`
 
-Compare current period vs previous period of same length.
-
-**Response:**
-```json
-{
-  "data": {
-    "current": {
-      "period": { "from": "2026-03-01", "to": "2026-03-17" },
-      "income": 4200.00,
-      "expenses": 1100.00,
-      "profit": 3100.00
-    },
-    "previous": {
-      "period": { "from": "2026-02-12", "to": "2026-02-28" },
-      "income": 3800.00,
-      "expenses": 950.00,
-      "profit": 2850.00
-    },
-    "change": {
-      "income": { "amount": 400.00, "percent": 10.5 },
-      "expenses": { "amount": 150.00, "percent": 15.8 },
-      "profit": { "amount": 250.00, "percent": 8.8 }
-    },
-    "trend": "up"
-  }
-}
-```
-
-`trend` values: `up` (>5% income increase), `down` (<-5%), `stable` (within +-5%)
-
----
+Compares the selected period to the previous period of the same length.
 
 ### `GET /api/summary/by-scope`
 
-Income/expense totals grouped by scope.
-
-**Response:**
-```json
-{
-  "data": {
-    "period": { "from": "2026-03-01", "to": "2026-03-17" },
-    "scopes": [
-      {
-        "scope": "salon",
-        "income": { "total": 3200.00, "count": 40 },
-        "expenses": { "total": 800.00, "count": 10 },
-        "profit": 2400.00
-      }
-    ]
-  },
-  "meta": { "count": 2 }
-}
-```
-
----
+Groups income, expenses, and profit by scope.
 
 ### `GET /api/summary/by-day`
 
-Income totals by day of week for the given period.
-
-**Response:**
-```json
-{
-  "data": {
-    "period": { "from": "2026-03-01", "to": "2026-03-17" },
-    "days": [
-      { "day": "Monday", "total": 650.00, "count": 8 },
-      { "day": "Tuesday", "total": 720.00, "count": 9 },
-      { "day": "Wednesday", "total": 580.00, "count": 7 },
-      { "day": "Thursday", "total": 690.00, "count": 8 },
-      { "day": "Friday", "total": 810.00, "count": 10 },
-      { "day": "Saturday", "total": 450.00, "count": 6 },
-      { "day": "Sunday", "total": 0.00, "count": 0 }
-    ],
-    "busiest": "Friday"
-  }
-}
-```
-
----
-
-### `GET /api/summary/by-month`
-
-Monthly income/expense breakdown. Defaults to last 12 months. Fills months with no data as zeros.
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `from` | string | Start date (defaults to ~12 months ago) |
-| `to` | string | End date (defaults to today) |
-| `scope`, `payment_method`, `source` | | Same as other summary endpoints |
-
-**Response:**
-```json
-{
-  "data": {
-    "period": { "from": "2025-03-17", "to": "2026-03-17" },
-    "months": [
-      {
-        "month": "2025-03",
-        "income": 3200.00,
-        "expenses": 900.00,
-        "profit": 2300.00,
-        "income_count": 38,
-        "expense_count": 12
-      }
-    ]
-  },
-  "meta": { "count": 13 }
-}
-```
-
----
+Groups income by weekday for the selected period.
 
 ### `GET /api/summary/by-category`
 
-Category breakdown ranked by total amount descending. Groups by (category, type) so income and expense categories are separate.
+Groups by `(category, type)`, sorted by total amount descending.
 
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `scope` | string | — | Filter by scope |
-| `period` | string | `month` | `today`, `week`, `month`, `year`, `custom` |
-| `from` | string | — | Required if `period=custom` |
-| `to` | string | — | Required if `period=custom` |
-| `type` | string | — | `income` or `expense` (omit for both) |
-| `source` | string | — | `bank`, `cash`, `agent`, `all` |
-| `payment_method` | string | — | Filter by payment method |
-| `limit` | int | 20 | Max categories to return |
+Additional params:
 
-**Response:**
-```json
-{
-  "data": {
-    "period": { "from": "2026-03-01", "to": "2026-03-27" },
-    "categories": [
-      { "category": "rent", "type": "expense", "total": 3600.00, "count": 1, "percent": 43.8 },
-      { "category": "income", "type": "income", "total": 7351.32, "count": 4, "percent": 91.9 }
-    ],
-    "totals": { "income": 7996.81, "expenses": 8213.04 }
-  }
-}
-```
+| Param | Notes |
+|---|---|
+| `type` | Optional `income` or `expense` |
+| `limit` | Default 20, max 100 |
 
----
+### `GET /api/summary/by-month`
+
+Groups income, expenses, and profit by calendar month. Defaults to roughly the last 12 months if `from` and `to` are omitted and fills missing months with zero totals.
+
+Query params: `scope`, `from`, `to`, `payment_method`, `source`.
 
 ## Snapshots
 
-Financial snapshots — household net worth, account balances, investments, spending by scope.
+Snapshots store arbitrary financial snapshot blobs keyed by `scope` and `date`.
+
+Current response shape: raw objects or arrays, not `{"data": ...}` envelopes.
+
+Snapshot reads and writes enforce the caller's `allowed_scopes`. When `GET /api/snapshots` omits `scope`, wildcard tokens see all snapshots and scoped tokens see only allowed scopes.
 
 ### `POST /api/snapshots`
 
-Create or upsert a snapshot. Matching (scope, date) replaces the existing record.
+Status: `201`
 
-**Body:**
+Body:
+
 ```json
 {
   "scope": "household",
   "date": "2026-03-27",
-  "data": { "net_worth": { ... }, "liquid_accounts": [ ... ], ... }
+  "data": {"net_worth": {}, "accounts": []}
 }
 ```
 
-| Field | Type | Required |
-|-------|------|----------|
-| `scope` | string | yes |
-| `date` | string | yes (YYYY-MM-DD) |
-| `data` | object | yes (arbitrary JSON blob) |
-
----
+If a snapshot already exists for the same `(scope, date)`, the `data` and `created_by` fields are replaced.
 
 ### `GET /api/snapshots`
 
-List snapshots with optional filters.
+Returns a raw array of `SnapshotOut`.
 
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `scope` | string | — | Filter by scope |
-| `from` | string | — | Start date (inclusive) |
-| `to` | string | — | End date (inclusive) |
-| `limit` | int | 50 | Max results (max 500) |
-| `offset` | int | 0 | Pagination offset |
+Query params:
 
----
+| Param | Notes |
+|---|---|
+| `scope` | Optional scope filter |
+| `from` | Start date, inclusive |
+| `to` | End date, inclusive |
+| `limit` | Default 50, max 500 |
+| `offset` | Default 0 |
 
 ### `GET /api/snapshots/latest`
 
-Get the most recent snapshot for a scope.
+Returns the most recent raw `SnapshotOut` for `scope`, default `household`.
 
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `scope` | string | `household` | Scope to query |
+### `GET /api/snapshots/{snapshot_id}`
 
----
+Returns one raw `SnapshotOut`.
 
-### `GET /api/snapshots/{id}`
+## Audit
 
-Get a specific snapshot by ID.
+Audit endpoints currently inspect transaction rows only.
 
----
+### `GET /api/audit`
+
+Returns a raw stats object:
+
+```json
+{
+  "soft_deleted_count": 0,
+  "content_duplicate_count": 0,
+  "active_count": 0
+}
+```
+
+`content_duplicate_count` counts duplicate active transaction groups by `(scope, date, amount, description)`.
+
+Query params:
+
+| Param | Notes |
+|---|---|
+| `scope` | Optional scope filter; omitted scope follows the caller's allowed scopes |
+
+### `DELETE /api/audit/soft-deleted`
+
+Requires wildcard `write` access. Permanently deletes soft-deleted transactions and returns:
+
+```json
+{"deleted_count": 0}
+```
 
 ## Error Codes
 
 | Status | Meaning |
-|--------|---------|
-| 401 | Invalid or missing bearer token |
-| 403 | Token lacks scope access or write permission |
-| 404 | Resource not found or soft-deleted |
-| 409 | Conflict (e.g. insufficient stock for item adjustment) |
-| 422 | Validation error — invalid scope, bad date format, missing required fields |
-| 503 | Database unreachable (health check only) |
+|---|---|
+| `401` | Missing or invalid bearer token |
+| `403` | Scope access denied or token lacks `write` |
+| `404` | Resource not found or soft-deleted |
+| `409` | Conflict, used for insufficient stock and cross-scope external identity collisions |
+| `422` | Validation error |
+| `503` | Health check database failure |
 
----
+## Generated Docs
 
-## OpenAPI / Swagger
+FastAPI exposes generated docs while the app is running:
 
-FastAPI auto-generates interactive docs:
-
-- **Swagger UI:** `GET /docs`
-- **ReDoc:** `GET /redoc`
-- **OpenAPI JSON:** `GET /openapi.json`
+- `GET /docs`
+- `GET /redoc`
+- `GET /openapi.json`

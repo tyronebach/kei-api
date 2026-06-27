@@ -3,9 +3,10 @@
 Agent-first data API for LLM assistants. Domain-agnostic via `scope` namespacing and `meta` JSON for domain-specific fields.
 
 ## Stack
-- **API:** FastAPI + SQLAlchemy + Alembic + SQLite
-- **CLI:** Python package at `cli/kei/`
-- **Auth:** Bearer token (`KEI_API_TOKEN`)
+- **API:** FastAPI + SQLAlchemy + Alembic + SQLite (`kei.db`)
+- **CLI:** Python package at `cli/kei/` (installable via `pip install -e .`)
+- **Auth:** Bearer token via `agent_tokens`, with `KEI_API_TOKEN` admin fallback
+- **Orchestration:** Docker (`docker-compose.yml`) or local venv
 - **Port:** 8081
 
 ## Test Execution (Non-Negotiable)
@@ -19,7 +20,7 @@ Use venv or Docker — never host-global Python.
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 # Docker
-docker compose exec api python -m pytest tests/ -q
+docker compose exec kei-api python -m pytest tests/ -q
 ```
 
 ## Dev Commands
@@ -55,7 +56,9 @@ python -m kei.cli health
 - Default stance: delete old-state compatibility code instead of carrying it forward.
 
 ## Resource Types
-`entities` · `items` · `lists` · `transactions` · `services` · `summary`
+`entities` · `items` · `lists` · `transactions` · `services` · `snapshots` · `summary` · `audit`
+
+Standard scoped resources share `id`, `scope`, created/updated timestamps, and soft delete. `meta` JSON exists on entities, transactions, items, and services.
 
 ## Key Files
 | File | Purpose |
@@ -64,15 +67,19 @@ python -m kei.cli health
 | `routers/` | One file per resource type |
 | `dependencies.py` | Auth dependency injection |
 | `config.py` | Env var handling |
-| `IMPLEMENTATION_PLAN.md` | Hardening roadmap — read before major work |
-| `CODEX_REVIEW_PROMPT.md` | Prior review prompt (useful context) |
+| `docs/API.md` | Current HTTP API contract |
+| `docs/ARCHITECTURE.md` | Current implementation architecture |
+| `docs/DEPLOY.md` | Deployment and operations runbook |
+| `docs/archive/` | Historical reviews and superseded plans only |
 
 ## High-Risk Areas
 - Alembic migration chain
 - Scope enforcement (`tests/test_scope_enforcement.py`)
-- Auth token fail-fast on `changeme` default
+- Snapshot router scope enforcement has dedicated regression coverage; keep it aligned with standard scoped resources.
+- Auth token fail-fast on `changeme` default unless `KEI_ALLOW_INSECURE_DEFAULT_TOKEN=true`
 - Search + pre-computed aggregates — don't bypass service layer
 
 ## CLI (cli/kei/)
 Separate installable package. Test it independently of the API.
-Config lives at `~/.kei/config.json`.
+CLI should work against both local dev and deployed API.
+Config lives at `~/.config/kei/config.yaml`.

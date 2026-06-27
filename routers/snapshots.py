@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from db.connection import get_db
+from db.helpers import apply_scope_filter
 from db.models import Snapshot
 from dependencies import AgentPrincipal, get_current_agent, validate_scope
 from schemas import SnapshotCreate, SnapshotOut
@@ -19,9 +20,7 @@ def list_snapshots(
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Snapshot)
-    if scope:
-        q = q.filter(Snapshot.scope == scope)
+    q = apply_scope_filter(db.query(Snapshot), Snapshot, scope, agent)
     if from_date:
         q = q.filter(Snapshot.date >= from_date)
     if to_date:
@@ -36,6 +35,9 @@ def get_latest_snapshot(
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
+    if not agent.can_access_scope(scope):
+        raise HTTPException(status_code=403, detail=f"No access to scope '{scope}'")
+
     snap = (
         db.query(Snapshot)
         .filter(Snapshot.scope == scope)
@@ -56,6 +58,8 @@ def get_snapshot(
     snap = db.query(Snapshot).filter(Snapshot.id == snapshot_id).first()
     if not snap:
         raise HTTPException(status_code=404, detail="Snapshot not found")
+    if not agent.can_access_scope(snap.scope):
+        raise HTTPException(status_code=403, detail="No access to this record's scope")
     return snap
 
 
@@ -68,6 +72,8 @@ def create_or_update_snapshot(
     validate_scope(body.scope)
     if not agent.can_write():
         raise HTTPException(status_code=403, detail="Write permission required")
+    if not agent.can_access_scope(body.scope):
+        raise HTTPException(status_code=403, detail=f"No write access to scope '{body.scope}'")
 
     # Upsert: replace if same scope+date exists
     existing = (

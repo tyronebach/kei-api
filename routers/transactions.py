@@ -210,6 +210,11 @@ def create_transaction(
             Transaction.external_id == body.external_id,
         ).first()
         if existing is not None:
+            if existing.scope != body.scope:
+                raise HTTPException(
+                    status_code=409,
+                    detail="External identity already exists in another scope",
+                )
             if existing.deleted_at is not None:
                 # Restore soft-deleted row instead of failing on UNIQUE constraint
                 existing.deleted_at = None
