@@ -1,6 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
+from db.models import Transaction
 from routers import transactions
 from schemas import TransactionCreate, TransactionUpdate
 
@@ -219,6 +220,51 @@ def test_transactions_crud(db_session, admin_agent):
     with pytest.raises(HTTPException) as exc:
         transactions.get_transaction(txn_id, agent=admin_agent, db=db_session)
     assert exc.value.status_code == 404
+
+
+def test_transaction_create_converts_amounts_with_decimal_precision(db_session, admin_agent):
+    normal = _create_txn(
+        db_session,
+        admin_agent,
+        amount=10.01,
+        date="2026-04-01",
+        force_create=True,
+    )
+    half_cent = _create_txn(
+        db_session,
+        admin_agent,
+        amount=10.005,
+        date="2026-04-02",
+        force_create=True,
+    )
+    string_amount = _create_txn(
+        db_session,
+        admin_agent,
+        amount="10.01",
+        date="2026-04-03",
+        force_create=True,
+    )
+
+    assert normal.amount == 10.01
+    assert half_cent.amount == 10.01
+    assert string_amount.amount == 10.01
+    assert db_session.get(Transaction, normal.id).amount == 1001
+    assert db_session.get(Transaction, half_cent.id).amount == 1001
+    assert db_session.get(Transaction, string_amount.id).amount == 1001
+
+
+def test_transaction_update_converts_amounts_with_decimal_precision(db_session, admin_agent):
+    created = _create_txn(db_session, admin_agent, amount=1.0, force_create=True)
+
+    updated = transactions.update_transaction(
+        created.id,
+        TransactionUpdate(amount=10.005),
+        agent=admin_agent,
+        db=db_session,
+    )
+
+    assert updated["data"].amount == 10.01
+    assert db_session.get(Transaction, created.id).amount == 1001
 
 
 def test_manually_enriched_flag_persists(db_session, admin_agent):

@@ -1,5 +1,6 @@
 import time
 from datetime import date as date_type, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 
 from typing import Annotated
 
@@ -22,7 +23,11 @@ router = APIRouter(
 
 
 def _dollars_to_cents(amount: float) -> int:
-    return round(amount * 100)
+    cents = (Decimal(str(amount)) * Decimal("100")).quantize(
+        Decimal("1"),
+        rounding=ROUND_HALF_UP,
+    )
+    return int(cents)
 
 
 def _fuzzy_score(
