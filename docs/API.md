@@ -59,6 +59,21 @@ Exceptions in the current app:
 - `/api/audit` returns a raw stats object.
 - `DELETE /api/audit/soft-deleted` returns a raw `{ "deleted_count": N }` object.
 
+Contract cleanup is future coordinated work. Do not change these live response
+shapes until dependent services have been checked. Before any breaking envelope
+migration, verify:
+
+- CLI snapshot commands that parse raw snapshot responses.
+- Household or system services that read or write snapshots.
+- Audit consumers that parse raw stats or purge counts.
+- Any deployed service still using `KEI_API_TOKEN` admin fallback auth.
+
+The preferred migration path is optional versioned envelope endpoints. Client
+hardening that accepts both raw and enveloped shapes is allowed only as a
+tracked temporary transition during a coordinated rollout; the same change must
+name the ADR or task and delete the dual parser after every dependency above is
+confirmed migrated.
+
 Errors are normalized:
 
 ```json
