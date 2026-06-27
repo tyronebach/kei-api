@@ -37,6 +37,14 @@ def validate_scope(scope: str):
         )
 
 
+def require_scope_write(agent: AgentPrincipal, scope: str) -> None:
+    if not agent.can_write():
+        raise HTTPException(status_code=403, detail="Read-only token")
+    validate_scope(scope)
+    if not agent.can_access_scope(scope):
+        raise HTTPException(status_code=403, detail=f"No write access to scope '{scope}'")
+
+
 def _invalid_token_row(agent_id: str, field: str, reason: str) -> HTTPException:
     logger.error(
         "Invalid agent token row for agent_id=%s: %s %s",

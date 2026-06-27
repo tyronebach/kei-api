@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from db.connection import get_db
 from db.helpers import active_query, apply_scope_filter, get_scoped_or_404
 from db.models import Entity, Transaction
-from dependencies import AgentPrincipal, get_current_agent, validate_scope
+from dependencies import AgentPrincipal, get_current_agent, require_scope_write, validate_scope
 from schemas import EntityCreate, EntityOut, EntitySearchOut, EntityUpdate
 from search import determine_confidence, score_record
 from utils import parse_date
@@ -25,11 +25,7 @@ def create_entity(
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
-    if not agent.can_write():
-        raise HTTPException(status_code=403, detail="Read-only token")
-    validate_scope(body.scope)
-    if not agent.can_access_scope(body.scope):
-        raise HTTPException(status_code=403, detail=f"No write access to scope '{body.scope}'")
+    require_scope_write(agent, body.scope)
 
     entity = Entity(**body.model_dump(exclude_none=True), created_by=agent.agent_id)
     db.add(entity)

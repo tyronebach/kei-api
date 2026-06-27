@@ -7,7 +7,6 @@ from rich import print as rprint
 from rich.table import Table
 
 from .client import KeiClient
-from .utils import resolve_id
 
 app = typer.Typer(name="list", help="Manage lists (shopping, todo, etc.).")
 
@@ -95,13 +94,7 @@ def check(
 ):
     """Check off an item."""
     client = get_client(ctx)
-    
-    # Resolve truncated ID
-    if len(item_id) < 32:
-        all_items = client.list_items(limit=200).get("data", [])
-        item_id = resolve_id(all_items, item_id)
-        if not item_id:
-            raise typer.Exit(1)
+    item_id = client._resolve_prefix(item_id, "/api/lists/items")
     
     client.list_update_item(item_id, checked=True)
     rprint(f"[green]✓ Checked off {item_id[:8]}[/green]")
@@ -114,13 +107,7 @@ def uncheck(
 ):
     """Uncheck an item."""
     client = get_client(ctx)
-    
-    # Resolve truncated ID
-    if len(item_id) < 32:
-        all_items = client.list_items(limit=200).get("data", [])
-        item_id = resolve_id(all_items, item_id)
-        if not item_id:
-            raise typer.Exit(1)
+    item_id = client._resolve_prefix(item_id, "/api/lists/items")
     
     client.list_update_item(item_id, checked=False)
     rprint(f"[green]Unchecked {item_id[:8]}[/green]")
@@ -133,13 +120,7 @@ def remove(
 ):
     """Remove an item from a list."""
     client = get_client(ctx)
-    
-    # Resolve truncated ID
-    if len(item_id) < 32:
-        all_items = client.list_items(limit=200).get("data", [])
-        item_id = resolve_id(all_items, item_id)
-        if not item_id:
-            raise typer.Exit(1)
+    item_id = client._resolve_prefix(item_id, "/api/lists/items")
     
     client.list_delete_item(item_id)
     rprint(f"[green]Removed {item_id[:8]}[/green]")
@@ -178,13 +159,7 @@ def update(
 ):
     """Update a list item."""
     client = get_client(ctx)
-    
-    # Resolve truncated ID
-    if len(item_id) < 32:
-        all_items = client.list_items(limit=200).get("data", [])
-        item_id = resolve_id(all_items, item_id)
-        if not item_id:
-            raise typer.Exit(1)
+    item_id = client._resolve_prefix(item_id, "/api/lists/items")
     
     data = {}
     if content:

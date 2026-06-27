@@ -7,7 +7,6 @@ from rich import print as rprint
 from rich.table import Table
 
 from .client import KeiClient
-from .utils import resolve_id
 
 app = typer.Typer(name="entity", help="Manage entities (clients, people, businesses).")
 
@@ -142,13 +141,7 @@ def get(
 ):
     """Get entity details."""
     client = get_client(ctx)
-    
-    # Resolve truncated ID
-    if len(entity_id) < 32:
-        all_entities = client.entity_list(limit=200).get("data", [])
-        entity_id = resolve_id(all_entities, entity_id)
-        if not entity_id:
-            raise typer.Exit(1)
+    entity_id = client._resolve_prefix(entity_id, "/api/entities")
     
     result = client.entity_get(entity_id)
     entity = result.get("data", result)
@@ -171,13 +164,7 @@ def activity(
 ):
     """Get entity activity/profile (visit history, spend, etc.)."""
     client = get_client(ctx)
-    
-    # Resolve truncated ID
-    if len(entity_id) < 32:
-        all_entities = client.entity_list(limit=200).get("data", [])
-        entity_id = resolve_id(all_entities, entity_id)
-        if not entity_id:
-            raise typer.Exit(1)
+    entity_id = client._resolve_prefix(entity_id, "/api/entities")
     
     result = client.entity_activity(entity_id)
     data = result.get("data", result)
@@ -212,13 +199,7 @@ def update(
 ):
     """Update an entity."""
     client = get_client(ctx)
-    
-    # Resolve truncated ID
-    if len(entity_id) < 32:
-        all_entities = client.entity_list(limit=200).get("data", [])
-        entity_id = resolve_id(all_entities, entity_id)
-        if not entity_id:
-            raise typer.Exit(1)
+    entity_id = client._resolve_prefix(entity_id, "/api/entities")
     
     data = {}
     if name:
@@ -250,13 +231,7 @@ def delete(
 ):
     """Delete an entity."""
     client = get_client(ctx)
-    
-    # Resolve truncated ID
-    if len(entity_id) < 32:
-        all_entities = client.entity_list(limit=200).get("data", [])
-        entity_id = resolve_id(all_entities, entity_id)
-        if not entity_id:
-            raise typer.Exit(1)
+    entity_id = client._resolve_prefix(entity_id, "/api/entities")
     
     if not force:
         confirm = typer.confirm(f"Delete entity {entity_id[:8]}?")

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from db.connection import get_db
 from db.helpers import active_query, apply_scope_filter, get_scoped_or_404
 from db.models import ListItem
-from dependencies import AgentPrincipal, get_current_agent, validate_scope
+from dependencies import AgentPrincipal, get_current_agent, require_scope_write, validate_scope
 from schemas import ListItemCreate, ListItemOut, ListItemUpdate
 
 router = APIRouter(
@@ -87,11 +87,7 @@ def create_list_item(
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
-    if not agent.can_write():
-        raise HTTPException(status_code=403, detail="Read-only token")
-    validate_scope(body.scope)
-    if not agent.can_access_scope(body.scope):
-        raise HTTPException(status_code=403, detail=f"No write access to scope '{body.scope}'")
+    require_scope_write(agent, body.scope)
 
     # Auto-assign position if not provided
     if body.position is None:
@@ -165,11 +161,7 @@ def clear_list(
     db: Session = Depends(get_db),
 ):
     """Delete all items in a list. Use checked_only=true to remove only checked items."""
-    if not agent.can_write():
-        raise HTTPException(status_code=403, detail="Read-only token")
-    validate_scope(scope)
-    if not agent.can_access_scope(scope):
-        raise HTTPException(status_code=403, detail=f"No write access to scope '{scope}'")
+    require_scope_write(agent, scope)
 
     q = active_query(db, ListItem).filter(
         ListItem.scope == scope,

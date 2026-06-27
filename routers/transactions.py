@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from db.connection import get_db
 from db.helpers import active_query, apply_scope_filter, get_scoped_or_404
 from db.models import Entity, Transaction
-from dependencies import AgentPrincipal, get_current_agent, validate_scope
+from dependencies import AgentPrincipal, get_current_agent, require_scope_write, validate_scope
 from schemas import TransactionCreate, TransactionOut, TransactionUpdate
 from utils import parse_date
 
@@ -194,73 +194,60 @@ def _validate_entity_scope(entity_id: str | None, scope: str, db: Session) -> No
         )
 
 
-@router.post("")
-def create_transaction(
+def _handle_external_identity(
     body: TransactionCreate,
-    agent: AgentPrincipal = Depends(get_current_agent),
-    db: Session = Depends(get_db),
-):
-    if not agent.can_write():
-        raise HTTPException(status_code=403, detail="Read-only token")
-    validate_scope(body.scope)
-    if not agent.can_access_scope(body.scope):
-        raise HTTPException(status_code=403, detail=f"No write access to scope '{body.scope}'")
+    agent: AgentPrincipal,
+    db: Session,
+) -> dict | None:
+    if not (body.external_source and body.external_id):
+        return None
 
-    # Step 4: entity scope integrity
-    _validate_entity_scope(body.entity_id, body.scope, db)
+    existing = db.query(Transaction).filter(
+        Transaction.external_source == body.external_source,
+        Transaction.external_id == body.external_id,
+    ).first()
+    if existing is None:
+        return None
+    if existing.scope != body.scope:
+        raise HTTPException(
+            status_code=409,
+            detail="External identity already exists in another scope",
+        )
+    if existing.deleted_at is not None:
+        existing.deleted_at = None
+        existing.updated_by = agent.agent_id
+        db.commit()
+        db.refresh(existing)
+        return {"restored": True, "data": TransactionOut.from_orm_cents(existing)}
+    return {"data": TransactionOut.from_orm_cents(existing)}
 
-    # Step 2: idempotent ingest — if external identity matches existing row, return it
-    if body.external_source and body.external_id:
-        existing = db.query(Transaction).filter(
-            Transaction.external_source == body.external_source,
-            Transaction.external_id == body.external_id,
-        ).first()
-        if existing is not None:
-            if existing.scope != body.scope:
-                raise HTTPException(
-                    status_code=409,
-                    detail="External identity already exists in another scope",
-                )
-            if existing.deleted_at is not None:
-                # Restore soft-deleted row instead of failing on UNIQUE constraint
-                existing.deleted_at = None
-                existing.updated_by = agent.agent_id
-                db.commit()
-                db.refresh(existing)
-                return {"restored": True, "data": TransactionOut.from_orm_cents(existing)}
-            return {"data": TransactionOut.from_orm_cents(existing)}
 
-    amount_cents = _dollars_to_cents(body.amount)
-
-    # Step 3: duplicate / reconcile detection
+def _handle_duplicate_decision(
+    body: TransactionCreate,
+    amount_cents: int,
+    agent: AgentPrincipal,
+    db: Session,
+) -> tuple[dict | None, Transaction | None, int]:
     probable_match: Transaction | None = None
-    probable_score: int = 0
+    probable_score = 0
 
     if body.external_source == "tributary" and not body.force_create:
-        # Tributary reconcile path: check for a manually-enriched Rem row with same amount+date+scope.
-        # If found, claim it (attach external identity) rather than creating a duplicate.
-        # Description is intentionally ignored — Rem's notes won't match Plaid bank strings.
         match, score = _find_fuzzy_duplicate_tributary(body, amount_cents, db)
         if match is not None and score >= 85:
-            # High-confidence reconcile: attach Tributary identity to the existing Rem row
             match.external_source = "tributary"
             match.external_id = body.external_id
             match.updated_by = agent.agent_id
             db.commit()
             db.refresh(match)
-            return {"reconciled": True, "data": TransactionOut.from_orm_cents(match)}
+            return {"reconciled": True, "data": TransactionOut.from_orm_cents(match)}, None, 0
         if match is not None and score >= 60:
             probable_match = match
             probable_score = score
-            # Fall through to create — Rem will see the probable_match warning
 
     elif not body.external_source and not body.force_create:
-        # Manual write (Rem) path: standard fuzzy check against all rows including Tributary ones.
-        # If a Tributary row exists for this transaction, enrich it rather than duplicating.
         match, score = _find_fuzzy_duplicate(body, amount_cents, db)
         if match is not None and score >= 92:
             if match.external_source == "tributary":
-                # Rem is logging something Tributary already imported — enrich the Tributary row
                 if body.description and not match.description:
                     match.description = body.description
                 if body.entity_id and not match.entity_id:
@@ -270,24 +257,57 @@ def create_transaction(
                 match.updated_by = agent.agent_id
                 db.commit()
                 db.refresh(match)
-                return {"enriched": True, "data": TransactionOut.from_orm_cents(match)}
-            # Non-Tributary duplicate — hard block
-            return {"matched": True, "data": TransactionOut.from_orm_cents(match)}
+                return {"enriched": True, "data": TransactionOut.from_orm_cents(match)}, None, 0
+            return {"matched": True, "data": TransactionOut.from_orm_cents(match)}, None, 0
         if match is not None and score >= 60:
             probable_match = match
             probable_score = score
 
-    # Build ORM dict; exclude 'amount' and 'force_create' (handle separately or not stored)
+    return None, probable_match, probable_score
+
+
+def _build_transaction_data(
+    body: TransactionCreate,
+    amount_cents: int,
+    agent: AgentPrincipal,
+) -> dict:
     data = body.model_dump(exclude_none=True, exclude={"amount", "force_create"})
     data["amount"] = amount_cents
     data["created_by"] = agent.agent_id
 
-    # Auto-infer manually_enriched: any non-Tributary write with description or entity_id
-    # is by definition a human enrichment — Rem shouldn't have to set this flag explicitly.
     if not body.external_source and not data.get("manually_enriched"):
         if body.description or body.entity_id:
             data["manually_enriched"] = True
 
+    return data
+
+
+@router.post("")
+def create_transaction(
+    body: TransactionCreate,
+    agent: AgentPrincipal = Depends(get_current_agent),
+    db: Session = Depends(get_db),
+):
+    require_scope_write(agent, body.scope)
+
+    _validate_entity_scope(body.entity_id, body.scope, db)
+
+    external_identity_response = _handle_external_identity(body, agent, db)
+    if external_identity_response is not None:
+        return external_identity_response
+
+    amount_cents = _dollars_to_cents(body.amount)
+
+    duplicate_response, probable_match, probable_score = _handle_duplicate_decision(
+        body,
+        amount_cents,
+        agent,
+        db,
+    )
+    if duplicate_response is not None:
+        return duplicate_response
+
+    data = _build_transaction_data(body, amount_cents, agent)
     txn = Transaction(**data)
     db.add(txn)
     db.commit()

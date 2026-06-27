@@ -9,7 +9,6 @@ from rich import print as rprint
 from rich.table import Table
 
 from .client import KeiClient
-from .utils import resolve_id
 
 app = typer.Typer(name="tx", help="Manage transactions (income/expenses).")
 
@@ -25,7 +24,7 @@ def add(
     amount: float = typer.Argument(..., help="Amount"),
     category: str = typer.Argument(..., help="Category (haircut, supplies, etc.)"),
     description: Optional[str] = typer.Option(None, "--desc", "-d", help="Description"),
-    entity: Optional[str] = typer.Option(None, "--entity", "-e", help="Linked entity ID"),
+    entity: Optional[str] = typer.Option(None, "--entity", "-e", help="Linked entity ID or ID prefix"),
     tx_date: Optional[str] = typer.Option(None, "--date", help="Date (YYYY-MM-DD), defaults to today"),
     cash: bool = typer.Option(False, "--cash", help="Cash payment"),
     card: bool = typer.Option(False, "--card", help="Card payment"),
@@ -53,11 +52,7 @@ def add(
     if description:
         data["description"] = description
     if entity:
-        if len(entity) < 32:
-            all_entities = client.entity_list(limit=200).get("data", [])
-            entity = resolve_id(all_entities, entity)
-            if not entity:
-                raise typer.Exit(1)
+        entity = client._resolve_prefix(entity, "/api/entities")
         data["entity_id"] = entity
     valid_payment_methods = {"cash", "etransfer", "card", "bank", "cheque", "other"}
     if payment_method:
@@ -237,7 +232,7 @@ def update(
     amount: Optional[float] = typer.Option(None, "--amount", "-a", help="New amount"),
     category: Optional[str] = typer.Option(None, "--category", "-c", help="New category"),
     description: Optional[str] = typer.Option(None, "--desc", "-d", help="New description"),
-    entity: Optional[str] = typer.Option(None, "--entity", "-e", help="Link to entity (ID or name prefix)"),
+    entity: Optional[str] = typer.Option(None, "--entity", "-e", help="Link to entity ID or ID prefix"),
     tx_date: Optional[str] = typer.Option(None, "--date", help="New date"),
 ):
     """Update a transaction (full update — replaces all provided fields)."""
@@ -252,11 +247,7 @@ def update(
     if tx_date:
         data["date"] = tx_date
     if entity:
-        if len(entity) < 32:
-            all_entities = client.entity_list(limit=200).get("data", [])
-            entity = resolve_id(all_entities, entity)
-            if not entity:
-                raise typer.Exit(1)
+        entity = client._resolve_prefix(entity, "/api/entities")
         data["entity_id"] = entity
 
     if not data:
@@ -271,7 +262,7 @@ def update(
 def link(
     ctx: typer.Context,
     tx_id: str = typer.Argument(..., help="Transaction ID (or 8-char prefix)"),
-    entity: str = typer.Argument(..., help="Entity ID or name prefix to link"),
+    entity: str = typer.Argument(..., help="Entity ID or ID prefix to link"),
 ):
     """Link a transaction to an entity (client, vendor, etc.).
 
@@ -279,17 +270,11 @@ def link(
     Also sets manually_enriched=True automatically (server-side).
 
     Example:
-        kei tx link abc12345 gina
+        kei tx link abc12345 ent12345
         kei tx link abc12345 ent_fullid123...
     """
     client = get_client(ctx)
-
-    # Resolve entity name prefix → full ID if needed
-    if len(entity) < 32:
-        all_entities = client.entity_list(limit=200).get("data", [])
-        entity = resolve_id(all_entities, entity)
-        if not entity:
-            raise typer.Exit(1)
+    entity = client._resolve_prefix(entity, "/api/entities")
 
     result = client.tx_patch(tx_id, entity_id=entity)
     tx = result.get("data", result)

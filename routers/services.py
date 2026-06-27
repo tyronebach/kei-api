@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from db.connection import get_db
 from db.helpers import active_query, apply_scope_filter, get_scoped_or_404
 from db.models import Service
-from dependencies import AgentPrincipal, get_current_agent, validate_scope
+from dependencies import AgentPrincipal, get_current_agent, require_scope_write, validate_scope
 from schemas import ServiceCreate, ServiceOut, ServiceUpdate
 
 router = APIRouter(
@@ -22,11 +22,7 @@ def create_service(
     agent: AgentPrincipal = Depends(get_current_agent),
     db: Session = Depends(get_db),
 ):
-    if not agent.can_write():
-        raise HTTPException(status_code=403, detail="Read-only token")
-    validate_scope(body.scope)
-    if not agent.can_access_scope(body.scope):
-        raise HTTPException(status_code=403, detail=f"No write access to scope '{body.scope}'")
+    require_scope_write(agent, body.scope)
 
     service = Service(**body.model_dump(exclude_none=True), created_by=agent.agent_id)
     db.add(service)
