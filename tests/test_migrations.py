@@ -66,6 +66,26 @@ def _get_indexes(engine, table: str) -> dict[str, dict]:
     return {row[1]: {"unique": bool(row[2])} for row in rows}
 
 
+def _get_index_columns(engine, table: str, index: str) -> list[str]:
+    with engine.connect() as conn:
+        rows = conn.execute(sa.text(f"PRAGMA index_info('{index}')")).fetchall()
+    return [row[2] for row in rows]
+
+
+def _get_foreign_keys(engine, table: str) -> list[dict]:
+    with engine.connect() as conn:
+        rows = conn.execute(sa.text(f"PRAGMA foreign_key_list('{table}')")).fetchall()
+    return [
+        {
+            "table": row[2],
+            "from": row[3],
+            "to": row[4],
+            "on_delete": row[6],
+        }
+        for row in rows
+    ]
+
+
 def test_transactions_has_external_source_column(migrated_engine):
     cols = _get_columns(migrated_engine, "transactions")
     assert "external_source" in cols, "external_source column missing from transactions"
@@ -84,6 +104,11 @@ def test_transactions_has_unique_external_identity_index(migrated_engine):
     assert idxs["uq_transactions_external_identity"]["unique"], (
         "uq_transactions_external_identity is not unique"
     )
+    assert _get_index_columns(
+        migrated_engine,
+        "transactions",
+        "uq_transactions_external_identity",
+    ) == ["external_source", "external_id"]
 
 
 def test_transactions_amount_is_integer(migrated_engine):
@@ -92,6 +117,48 @@ def test_transactions_amount_is_integer(migrated_engine):
     # SQLite stores types loosely; check the declared type contains INTEGER
     col_type = cols["amount"]["type"].upper()
     assert "INT" in col_type, f"Expected INTEGER type for amount, got: {col_type}"
+
+
+def test_snapshots_have_unique_scope_date_constraint(migrated_engine):
+    idxs = _get_indexes(migrated_engine, "snapshots")
+    unique_indexes = [name for name, info in idxs.items() if info["unique"]]
+    assert any(
+        _get_index_columns(migrated_engine, "snapshots", index) == ["scope", "date"]
+        for index in unique_indexes
+    ), "snapshots must enforce unique (scope, date)"
+
+
+def test_snapshots_have_scope_and_date_indexes(migrated_engine):
+    idxs = _get_indexes(migrated_engine, "snapshots")
+    assert "idx_snapshots_scope" in idxs
+    assert "idx_snapshots_date" in idxs
+
+
+def test_item_movements_have_expected_foreign_keys(migrated_engine):
+    fks = _get_foreign_keys(migrated_engine, "item_movements")
+    assert {
+        "table": "items",
+        "from": "item_id",
+        "to": "id",
+        "on_delete": "CASCADE",
+    } in fks
+    assert {
+        "table": "transactions",
+        "from": "transaction_id",
+        "to": "id",
+        "on_delete": "SET NULL",
+    } in fks
+
+
+def test_agent_tokens_have_unique_identity_indexes(migrated_engine):
+    idxs = _get_indexes(migrated_engine, "agent_tokens")
+    unique_index_columns = [
+        _get_index_columns(migrated_engine, "agent_tokens", index)
+        for index, info in idxs.items()
+        if info["unique"]
+    ]
+    assert ["agent_id"] in unique_index_columns
+    assert ["token_hash"] in unique_index_columns
 
 
 def test_recurring_tables_do_not_exist(migrated_engine):
