@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +11,7 @@ from db.connection import SessionLocal
 from routers import audit, entities, items, lists, services, snapshots, summary, transactions
 
 app = FastAPI(title="Kei API", version="0.2.0")
+logger = logging.getLogger(__name__)
 
 if settings.cors_origins:
     app.add_middleware(
@@ -73,6 +76,7 @@ def health():
         db.execute(text("SELECT 1"))
         return {"status": "ok"}
     except Exception:
+        logger.exception("Health check DB query failed")
         return JSONResponse(status_code=503, content={"status": "unhealthy"})
     finally:
         db.close()

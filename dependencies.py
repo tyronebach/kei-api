@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import secrets
 from dataclasses import dataclass
 
@@ -11,6 +12,8 @@ from db.connection import get_db
 from db.models import AgentToken
 
 security = HTTPBearer()
+logger = logging.getLogger(__name__)
+VALID_TOKEN_PERMISSIONS = {"read", "write"}
 
 
 @dataclass
@@ -34,6 +37,61 @@ def validate_scope(scope: str):
         )
 
 
+def _invalid_token_row(agent_id: str, field: str, reason: str) -> HTTPException:
+    logger.error(
+        "Invalid agent token row for agent_id=%s: %s %s",
+        agent_id,
+        field,
+        reason,
+    )
+    return HTTPException(
+        status_code=500,
+        detail="Invalid agent token configuration",
+    )
+
+
+def _validate_string_list(value, field: str, agent_id: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise _invalid_token_row(agent_id, field, "must be a non-empty list")
+
+    cleaned: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise _invalid_token_row(
+                agent_id,
+                field,
+                "must contain only non-empty strings",
+            )
+        cleaned.append(item.strip())
+    return cleaned
+
+
+def _principal_from_token_row(agent_token: AgentToken) -> AgentPrincipal:
+    allowed_scopes = _validate_string_list(
+        agent_token.allowed_scopes,
+        "allowed_scopes",
+        agent_token.agent_id,
+    )
+    permissions = _validate_string_list(
+        agent_token.permissions,
+        "permissions",
+        agent_token.agent_id,
+    )
+    invalid_permissions = sorted(set(permissions) - VALID_TOKEN_PERMISSIONS)
+    if invalid_permissions:
+        raise _invalid_token_row(
+            agent_token.agent_id,
+            "permissions",
+            f"contains unsupported values: {invalid_permissions}",
+        )
+
+    return AgentPrincipal(
+        agent_id=agent_token.agent_id,
+        allowed_scopes=allowed_scopes,
+        permissions=permissions,
+    )
+
+
 def get_current_agent(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
@@ -46,13 +104,9 @@ def get_current_agent(
     )
 
     if agent_token:
-        return AgentPrincipal(
-            agent_id=agent_token.agent_id,
-            allowed_scopes=agent_token.allowed_scopes,
-            permissions=agent_token.permissions,
-        )
+        return _principal_from_token_row(agent_token)
 
-    # Backward-compatible admin token.
+    # Canonical admin/operator fallback token.
     if secrets.compare_digest(credentials.credentials, settings.api_token):
         return AgentPrincipal(
             agent_id="admin",
